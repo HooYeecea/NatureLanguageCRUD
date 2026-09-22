@@ -75,6 +75,32 @@ def init_meta_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id TEXT PRIMARY KEY,
+                connection_id TEXT,
+                action TEXT NOT NULL,
+                status TEXT NOT NULL,
+                actor TEXT,
+                summary TEXT,
+                detail_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_audit_logs_created
+            ON audit_logs(created_at DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_audit_logs_connection
+            ON audit_logs(connection_id, created_at DESC)
+            """
+        )
 
 
 def _row_to_dict(row: sqlite3.Row, include_password: bool = False) -> dict[str, Any]:

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
-from app import meta_db
+from app import audit, meta_db
 from app.db.engines import create_db_engine, test_engine
 from app.db.schema import get_engine_cfg, introspect_schema, introspect_table
 from app.models import (
@@ -27,6 +27,13 @@ def list_connections():
 @router.post("", response_model=ConnectionOut, status_code=201)
 def create_connection(body: ConnectionCreate):
     created = meta_db.create_connection(body.model_dump())
+    audit.write_audit(
+        action="connection.create",
+        status="success",
+        connection_id=created["id"],
+        summary=f"created connection {created['name']}",
+        detail={"name": created["name"], "dialect": created["dialect"]},
+    )
     return _to_out(created)
 
 
@@ -44,14 +51,30 @@ def update_connection(connection_id: str, body: ConnectionUpdate):
     updated = meta_db.update_connection(connection_id, payload)
     if not updated:
         raise HTTPException(status_code=404, detail="Connection not found")
+    logged_fields = [k for k in payload.keys() if k != "password"]
+    audit.write_audit(
+        action="connection.update",
+        status="success",
+        connection_id=connection_id,
+        summary=f"updated connection {updated['name']}",
+        detail={"fields": logged_fields},
+    )
     return _to_out(updated)
 
 
 @router.delete("/{connection_id}", status_code=204)
 def delete_connection(connection_id: str):
+    existing = meta_db.get_connection(connection_id)
     ok = meta_db.delete_connection(connection_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Connection not found")
+    audit.write_audit(
+        action="connection.delete",
+        status="success",
+        connection_id=connection_id,
+        summary=f"deleted connection {existing['name'] if existing else connection_id}",
+        detail={"name": existing["name"] if existing else None},
+    )
     return None
 
 
@@ -62,6 +85,13 @@ def test_connection(connection_id: str):
         raise HTTPException(status_code=404, detail="Connection not found")
     engine = create_db_engine(get_engine_cfg(data))
     ok, message, version = test_engine(engine)
+    audit.write_audit(
+        action="connection.test",
+        status="success" if ok else "error",
+        connection_id=connection_id,
+        summary=message,
+        detail={"server_version": version},
+    )
     return ConnectionTestResult(ok=ok, message=message, server_version=version)
 
 

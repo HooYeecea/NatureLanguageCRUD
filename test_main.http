@@ -67,3 +67,13 @@ Content-Type: application/json
 {
   "prompt": "给负责人 1 新建一个优先级为高的任务：修复支付超时"
 }
+
+### List audit logs
+GET http://127.0.0.1:8000/api/audit?connection_id={{id}}&limit=50
+
+### Filter audit by action
+GET http://127.0.0.1:8000/api/audit?action=mutate.confirm&limit=20
+
+### Get one audit log
+GET http://127.0.0.1:8000/api/audit/{{log_id}}
+

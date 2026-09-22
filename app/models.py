@@ -222,3 +222,14 @@ class MutateExecuteResult(BaseModel):
     rowcount: int
     lastrowid: Optional[int] = None
     status: str = "executed"
+
+
+class AuditLogOut(BaseModel):
+    id: str
+    connection_id: Optional[str] = None
+    action: str
+    status: str
+    actor: Optional[str] = None
+    summary: Optional[str] = None
+    detail: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime

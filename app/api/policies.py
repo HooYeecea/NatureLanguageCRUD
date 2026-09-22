@@ -1,6 +1,8 @@
 from fastapi import APIRouter, HTTPException
 
-from app import meta_db
+from app import audit, meta_db
+from app import policy as policy_guard
+from app import policy_store
 from app.db.engines import create_db_engine
 from app.db.schema import get_engine_cfg, introspect_schema
 from app.models import (
@@ -10,8 +12,6 @@ from app.models import (
     PolicyCheckResult,
     TablePolicy,
 )
-from app import policy as policy_guard
-from app import policy_store
 
 router = APIRouter(prefix="/api/connections", tags=["policies"])
 
@@ -32,7 +32,6 @@ def get_policy(connection_id: str):
 @router.put("/{connection_id}/policy", response_model=AccessPolicyOut)
 def put_policy(connection_id: str, body: AccessPolicyUpsert):
     _require_connection(connection_id)
-    # Deduplicate table keys (schema + table)
     seen: set[tuple[str | None, str]] = set()
     for t in body.tables:
         key = (t.schema_name, t.table)
@@ -44,6 +43,17 @@ def put_policy(connection_id: str, body: AccessPolicyUpsert):
         seen.add(key)
 
     saved = policy_store.upsert_policy(connection_id, body.model_dump())
+    audit.write_audit(
+        action="policy.update",
+        status="success",
+        connection_id=connection_id,
+        summary=f"updated policy ({len(saved.get('tables') or [])} tables)",
+        detail={
+            "table_count": len(saved.get("tables") or []),
+            "max_rows_per_mutation": saved.get("max_rows_per_mutation"),
+            "max_rows_per_query": saved.get("max_rows_per_query"),
+        },
+    )
     return AccessPolicyOut(**saved)
 
 
@@ -86,6 +96,19 @@ def allow_all_tables(
     ]
     body = AccessPolicyUpsert(tables=tables)
     saved = policy_store.upsert_policy(connection_id, body.model_dump())
+    audit.write_audit(
+        action="policy.allow_all",
+        status="success",
+        connection_id=connection_id,
+        summary=f"allow-all policy ({len(tables)} tables)",
+        detail={
+            "table_count": len(tables),
+            "allow_delete": allow_delete,
+            "allow_insert": allow_insert,
+            "allow_update": allow_update,
+            "allow_select": allow_select,
+        },
+    )
     return AccessPolicyOut(**saved)
 
 

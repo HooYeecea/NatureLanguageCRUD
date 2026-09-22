@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
-from app import meta_db, policy_store
+from app import audit, meta_db, policy_store
 from app.db.engines import create_db_engine
 from app.db.schema import get_engine_cfg, introspect_schema
 from app.models import (
@@ -28,8 +28,31 @@ def _load_connection(connection_id: str) -> dict:
     return data
 
 
-def _run_guarded(connection: dict, guarded, *, dry_run: bool, explanation: str | None = None, reply: str | None = None) -> QueryResult:
+def _run_guarded(
+    connection_id: str,
+    connection: dict,
+    guarded,
+    *,
+    action: str,
+    dry_run: bool,
+    explanation: str | None = None,
+    reply: str | None = None,
+    prompt: str | None = None,
+) -> QueryResult:
     if dry_run:
+        audit.write_audit(
+            action=action,
+            status="success",
+            connection_id=connection_id,
+            summary=f"dry-run query on {', '.join(guarded.tables)}",
+            detail={
+                "sql": guarded.sql,
+                "tables": guarded.tables,
+                "limit": guarded.limit,
+                "dry_run": True,
+                "prompt": prompt,
+            },
+        )
         return QueryResult(
             sql=guarded.sql,
             tables=guarded.tables,
@@ -43,10 +66,31 @@ def _run_guarded(connection: dict, guarded, *, dry_run: bool, explanation: str |
     try:
         result = execute_select(engine, guarded.sql)
     except Exception as exc:  # noqa: BLE001
+        audit.write_audit(
+            action=action,
+            status="error",
+            connection_id=connection_id,
+            summary="query execution failed",
+            detail={"sql": guarded.sql, "error": str(exc), "prompt": prompt},
+        )
         raise HTTPException(status_code=400, detail=f"Query execution failed: {exc}") from exc
     finally:
         engine.dispose()
 
+    audit.write_audit(
+        action=action,
+        status="success",
+        connection_id=connection_id,
+        summary=f"query returned {result['row_count']} rows",
+        detail={
+            "sql": guarded.sql,
+            "tables": guarded.tables,
+            "limit": guarded.limit,
+            "row_count": result["row_count"],
+            "dry_run": False,
+            "prompt": prompt,
+        },
+    )
     return QueryResult(
         sql=guarded.sql,
         tables=guarded.tables,
@@ -76,8 +120,21 @@ def query_structured(connection_id: str, body: StructuredQueryRequest):
             limit=body.limit,
         )
     except SqlGuardError as exc:
+        audit.write_audit(
+            action="query.structured",
+            status="error",
+            connection_id=connection_id,
+            summary=exc.message,
+            detail={"table": body.table},
+        )
         raise HTTPException(status_code=400, detail=exc.message) from exc
-    return _run_guarded(connection, guarded, dry_run=body.dry_run)
+    return _run_guarded(
+        connection_id,
+        connection,
+        guarded,
+        action="query.structured",
+        dry_run=body.dry_run,
+    )
 
 
 @router.post("/{connection_id}/query/sql", response_model=QueryResult)
@@ -87,8 +144,21 @@ def query_raw_sql(connection_id: str, body: RawSqlQueryRequest):
     try:
         guarded = guard_select_sql(body.sql, dialect=connection["dialect"], policy=policy)
     except SqlGuardError as exc:
+        audit.write_audit(
+            action="query.sql",
+            status="error",
+            connection_id=connection_id,
+            summary=exc.message,
+            detail={"sql": body.sql},
+        )
         raise HTTPException(status_code=400, detail=exc.message) from exc
-    return _run_guarded(connection, guarded, dry_run=body.dry_run)
+    return _run_guarded(
+        connection_id,
+        connection,
+        guarded,
+        action="query.sql",
+        dry_run=body.dry_run,
+    )
 
 
 @router.post("/{connection_id}/query/nl", response_model=QueryResult)
@@ -101,6 +171,13 @@ def query_natural_language(connection_id: str, body: NlQueryRequest):
         overview = introspect_schema(engine, connection_id, connection["dialect"])
         schema_tables = [t.model_dump() for t in overview.tables]
     except Exception as exc:  # noqa: BLE001
+        audit.write_audit(
+            action="query.nl",
+            status="error",
+            connection_id=connection_id,
+            summary="schema introspection failed",
+            detail={"error": str(exc), "prompt": body.prompt},
+        )
         raise HTTPException(status_code=400, detail=f"Schema introspection failed: {exc}") from exc
     finally:
         engine.dispose()
@@ -113,19 +190,50 @@ def query_natural_language(connection_id: str, body: NlQueryRequest):
             schema_tables=schema_tables,
         )
     except LlmNotConfigured as exc:
+        audit.write_audit(
+            action="query.nl",
+            status="error",
+            connection_id=connection_id,
+            summary="LLM not configured",
+            detail={"prompt": body.prompt},
+        )
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except SqlGuardError as exc:
+        audit.write_audit(
+            action="query.nl",
+            status="error",
+            connection_id=connection_id,
+            summary=exc.message,
+            detail={"prompt": body.prompt},
+        )
         raise HTTPException(status_code=400, detail=exc.message) from exc
     except Exception as exc:  # noqa: BLE001
+        audit.write_audit(
+            action="query.nl",
+            status="error",
+            connection_id=connection_id,
+            summary="LLM request failed",
+            detail={"error": str(exc), "prompt": body.prompt},
+        )
         raise HTTPException(status_code=502, detail=f"LLM request failed: {exc}") from exc
 
     if guarded is None:
+        audit.write_audit(
+            action="query.nl",
+            status="success",
+            connection_id=connection_id,
+            summary="no query generated",
+            detail={"prompt": body.prompt, "reply": reply},
+        )
         return QueryResult(sql="", dry_run=body.dry_run, reply=reply or "No query generated.")
 
     return _run_guarded(
+        connection_id,
         connection,
         guarded,
+        action="query.nl",
         dry_run=body.dry_run,
         explanation=explanation,
         reply=reply,
+        prompt=body.prompt,
     )
