@@ -7,6 +7,7 @@ import type {
   SchemaOverview,
   Settings,
 } from './types'
+import { friendlyError } from './errors'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -14,14 +15,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   })
   if (!res.ok) {
-    let detail = res.statusText
+    let detail: unknown = res.statusText
     try {
       const body = await res.json()
-      detail = body.detail || JSON.stringify(body)
+      detail = body.detail ?? body
     } catch {
       /* ignore */
     }
-    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
+    throw new Error(friendlyError(detail))
   }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
@@ -57,6 +58,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+
+  deleteConnection: (id: string) =>
+    request<void>(`/api/connections/${id}`, { method: 'DELETE' }),
 
   testConnection: (id: string) =>
     request<{ ok: boolean; message: string; server_version?: string }>(

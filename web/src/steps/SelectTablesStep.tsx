@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
+import { friendlyError } from '../errors'
 import type { Connection, SchemaOverview } from '../types'
 
 type Selected = { table: string; schema_name?: string | null }
@@ -27,7 +28,7 @@ export function SelectTablesStep({ connection, onBack, onNext }: Props) {
           setSelected(new Set(s.tables.map((t) => keyOf(t.schema_name, t.name))))
         }
       })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .catch((e) => setError(friendlyError(e)))
       .finally(() => setBusy(false))
   }, [connection.id])
 
@@ -65,7 +66,7 @@ export function SelectTablesStep({ connection, onBack, onNext }: Props) {
       await api.selectTables(connection.id, selectedList)
       onNext(schema, selectedList)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(friendlyError(e))
     } finally {
       setBusy(false)
     }

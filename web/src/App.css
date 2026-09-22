@@ -283,6 +283,16 @@ textarea {
   background: transparent;
 }
 
+.btn.danger-ghost {
+  background: transparent;
+  color: var(--danger);
+  border-color: #e2b4b4;
+}
+
+.btn.danger-ghost:hover {
+  background: #fff1f1;
+}
+
 .actions {
   display: flex;
   gap: 0.6rem;
@@ -315,6 +325,17 @@ textarea {
   margin: 0 0 1rem;
   display: grid;
   gap: 0.55rem;
+}
+
+.conn-list {
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+  margin-bottom: 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.55rem;
+  background: #fbfaf6;
 }
 
 .conn-list li,
@@ -421,6 +442,16 @@ textarea {
 .bubble.assistant {
   background: #fff;
   width: min(100%, 760px);
+}
+
+.bubble.error {
+  border-color: #e2b4b4;
+  background: #fff7f7;
+  color: var(--danger);
+}
+
+.bubble.sql .sql {
+  margin-top: 0.55rem;
 }
 
 .sql,

@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api } from '../api'
+import { friendlyError } from '../errors'
 import type { Settings } from '../types'
 
 type Props = {
@@ -31,7 +32,7 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
         setBaseUrl(s.llm_base_url || 'https://api.deepseek.com')
         setModel(s.llm_model || 'deepseek-chat')
       })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .catch((e) => setError(friendlyError(e)))
       .finally(() => setLoading(false))
   }, [open])
 
@@ -53,7 +54,7 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
       setOk('已保存。API Key 仅加密存储，不会明文回显。')
       onSaved?.(saved)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(friendlyError(err))
     } finally {
       setSaving(false)
     }
@@ -68,7 +69,7 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
       setOk('已清除界面保存的 API Key（若 .env 仍有值，会继续使用环境变量）。')
       onSaved?.(saved)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(friendlyError(err))
     } finally {
       setSaving(false)
     }

@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api } from '../api'
+import { friendlyError } from '../errors'
 import type { Connection, Dialect } from '../types'
 
 type Props = {
@@ -42,11 +43,26 @@ export function ConnectStep({ onConnected }: Props) {
     setError(null)
     try {
       const result = await api.testConnection(conn.id)
-      if (!result.ok) throw new Error(result.message)
+      if (!result.ok) throw new Error(friendlyError(result.message, '连接测试失败'))
       setMessage(`已连接：${conn.name} (${result.server_version || conn.dialect})`)
       onConnected(conn)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(friendlyError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function removeConnection(conn: Connection) {
+    if (!window.confirm(`确定删除连接「${conn.name}」吗？`)) return
+    setBusy(true)
+    setError(null)
+    try {
+      await api.deleteConnection(conn.id)
+      setExisting((prev) => prev.filter((c) => c.id !== conn.id))
+      setMessage(`已删除连接：${conn.name}`)
+    } catch (e) {
+      setError(friendlyError(e))
     } finally {
       setBusy(false)
     }
@@ -82,11 +98,12 @@ export function ConnectStep({ onConnected }: Props) {
 
       const created = await api.createConnection(body)
       const result = await api.testConnection(created.id)
-      if (!result.ok) throw new Error(result.message)
+      if (!result.ok) throw new Error(friendlyError(result.message, '连接测试失败'))
+      setExisting((prev) => [...prev, created])
       setMessage(`连接成功：${result.server_version || dialect}`)
       onConnected(created)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(friendlyError(err))
     } finally {
       setBusy(false)
     }
@@ -101,7 +118,9 @@ export function ConnectStep({ onConnected }: Props) {
 
       {existing.length > 0 && (
         <div className="existing">
-          <h3>已有连接</h3>
+          <div className="toolbar">
+            <h3>已有连接（{existing.length}）</h3>
+          </div>
           <ul className="conn-list">
             {existing.map((c) => (
               <li key={c.id}>
@@ -109,14 +128,24 @@ export function ConnectStep({ onConnected }: Props) {
                   <strong>{c.name}</strong>
                   <span className="muted"> · {c.dialect}</span>
                 </div>
-                <button
-                  type="button"
-                  className="btn ghost"
-                  disabled={busy}
-                  onClick={() => useExisting(c)}
-                >
-                  使用
-                </button>
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    disabled={busy}
+                    onClick={() => useExisting(c)}
+                  >
+                    使用
+                  </button>
+                  <button
+                    type="button"
+                    className="btn danger-ghost"
+                    disabled={busy}
+                    onClick={() => removeConnection(c)}
+                  >
+                    删除
+                  </button>
+                </div>
               </li>
             ))}
           </ul>

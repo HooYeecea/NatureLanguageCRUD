@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api } from '../api'
+import { friendlyError } from '../errors'
 import type { Connection, InterpretResult, MutatePreview, QueryResult } from '../types'
 
 type Props = {
@@ -11,9 +12,11 @@ type Props = {
 
 type ChatItem = {
   role: 'user' | 'assistant'
+  kind?: 'text' | 'sql' | 'result' | 'error'
   text: string
   sql?: string
   rows?: Record<string, unknown>[]
+  rowCount?: number
   preview?: MutatePreview
 }
 
@@ -25,55 +28,93 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
   const [items, setItems] = useState<ChatItem[]>([
     {
       role: 'assistant',
+      kind: 'text',
       text: `已就绪。当前范围：${interpret.selected_tables.join(', ')}。可以用自然语言查询或提出写入（写入需确认）。`,
     },
   ])
   const [pending, setPending] = useState<MutatePreview | null>(null)
+  const chatRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = chatRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [items, busy])
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     if (!prompt.trim()) return
     const userText = prompt.trim()
     setPrompt('')
-    setItems((prev) => [...prev, { role: 'user', text: userText }])
+    setItems((prev) => [...prev, { role: 'user', kind: 'text', text: userText }])
     setBusy(true)
     setError(null)
     try {
       if (mode === 'query') {
         const result: QueryResult = await api.nlQuery(connection.id, userText)
-        setItems((prev) => [
-          ...prev,
-          {
+        const next: ChatItem[] = []
+
+        if (result.sql) {
+          next.push({
             role: 'assistant',
-            text:
-              result.reply ||
-              result.explanation ||
-              (result.row_count != null
-                ? `查询完成，返回 ${result.row_count} 行。`
-                : '已完成。'),
-            sql: result.sql || undefined,
+            kind: 'sql',
+            text: '已转换为 SQL',
+            sql: result.sql,
+          })
+        }
+
+        if (result.rows && result.rows.length > 0) {
+          next.push({
+            role: 'assistant',
+            kind: 'result',
+            text: `查询结果（${result.row_count} 行）`,
             rows: result.rows,
-          },
-        ])
+            rowCount: result.row_count,
+          })
+        } else if (result.sql) {
+          next.push({
+            role: 'assistant',
+            kind: 'result',
+            text: result.reply || result.explanation || '查询完成，没有返回数据。',
+            rowCount: result.row_count ?? 0,
+          })
+        } else {
+          next.push({
+            role: 'assistant',
+            kind: 'text',
+            text: result.reply || result.explanation || '未生成可执行查询。',
+          })
+        }
+
+        setItems((prev) => [...prev, ...next])
       } else {
         const preview = await api.nlMutate(connection.id, userText)
         setPending(preview.blocked ? null : preview)
-        setItems((prev) => [
-          ...prev,
-          {
+        const next: ChatItem[] = []
+        if (preview.sql) {
+          next.push({
             role: 'assistant',
-            text: preview.blocked
-              ? `已拦截：${preview.block_reason}`
-              : `预览 ${preview.operation} → ${preview.table}，影响约 ${preview.affected_count} 行。请确认后执行。`,
+            kind: 'sql',
+            text: '已生成写入 SQL（待确认）',
             sql: preview.sql,
-            preview,
-          },
-        ])
+          })
+        }
+        next.push({
+          role: 'assistant',
+          kind: 'text',
+          text: preview.blocked
+            ? `已拦截：${friendlyError(preview.block_reason, '该写入被策略拦截')}`
+            : `预览 ${preview.operation} → ${preview.table}，影响约 ${preview.affected_count} 行。请确认后执行。`,
+          preview,
+        })
+        setItems((prev) => [...prev, ...next])
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = friendlyError(err)
       setError(msg)
-      setItems((prev) => [...prev, { role: 'assistant', text: `失败：${msg}` }])
+      setItems((prev) => [
+        ...prev,
+        { role: 'assistant', kind: 'error', text: msg },
+      ])
     } finally {
       setBusy(false)
     }
@@ -89,13 +130,14 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
         ...prev,
         {
           role: 'assistant',
-          text: `已执行 ${result.operation}，rowcount=${result.rowcount}`,
+          kind: 'text',
+          text: `已执行 ${result.operation}，影响 ${result.rowcount} 行。`,
           sql: result.sql,
         },
       ])
       setPending(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(friendlyError(err))
     } finally {
       setBusy(false)
     }
@@ -127,9 +169,9 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
         </button>
       </div>
 
-      <div className="chat">
+      <div className="chat" ref={chatRef}>
         {items.map((item, idx) => (
-          <article key={idx} className={`bubble ${item.role}`}>
+          <article key={idx} className={`bubble ${item.role} ${item.kind || ''}`}>
             <p>{item.text}</p>
             {item.sql && (
               <pre className="sql">
@@ -160,6 +202,11 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
             )}
           </article>
         ))}
+        {busy && (
+          <article className="bubble assistant text">
+            <p className="muted">正在处理…</p>
+          </article>
+        )}
       </div>
 
       {pending && (

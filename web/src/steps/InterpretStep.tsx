@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { friendlyError } from '../errors'
 import type { Connection, InterpretResult } from '../types'
 
 type Selected = { table: string; schema_name?: string | null }
@@ -37,7 +38,7 @@ export function InterpretStep({
         )
         if (!cancelled) setResult(interpreted)
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+        if (!cancelled) setError(friendlyError(e))
       } finally {
         if (!cancelled) setBusy(false)
       }
