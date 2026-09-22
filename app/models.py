@@ -177,3 +177,48 @@ class QueryResult(BaseModel):
     row_count: int = 0
     explanation: Optional[str] = None
     reply: Optional[str] = None
+
+
+MutationOp = Literal["insert", "update", "delete"]
+
+
+class MutateRequest(BaseModel):
+    operation: MutationOp
+    table: str
+    schema_name: Optional[str] = None
+    values: Optional[dict[str, Any]] = None
+    set_values: Optional[dict[str, Any]] = None
+    filters: list[QueryFilter] = Field(default_factory=list)
+
+
+class NlMutateRequest(BaseModel):
+    prompt: str = Field(..., min_length=1)
+
+
+class MutatePreviewResult(BaseModel):
+    preview_id: str
+    operation: MutationOp
+    table: str
+    schema_name: Optional[str] = None
+    sql: str
+    affected_count: int
+    sample_rows: list[dict[str, Any]] = Field(default_factory=list)
+    blocked: bool = False
+    block_reason: Optional[str] = None
+    expires_at: datetime
+    explanation: Optional[str] = None
+    reply: Optional[str] = None
+
+
+class MutateConfirmRequest(BaseModel):
+    preview_id: str
+
+
+class MutateExecuteResult(BaseModel):
+    preview_id: str
+    operation: MutationOp
+    table: str
+    sql: str
+    rowcount: int
+    lastrowid: Optional[int] = None
+    status: str = "executed"

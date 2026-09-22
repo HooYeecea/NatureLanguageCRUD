@@ -61,6 +61,20 @@ def init_meta_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS pending_mutations (
+                id TEXT PRIMARY KEY,
+                connection_id TEXT NOT NULL,
+                plan_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                executed_at TEXT,
+                FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE
+            )
+            """
+        )
 
 
 def _row_to_dict(row: sqlite3.Row, include_password: bool = False) -> dict[str, Any]:

@@ -4,45 +4,66 @@ GET http://127.0.0.1:8000/health
 ### List connections
 GET http://127.0.0.1:8000/api/connections
 
-### Get policy
-GET http://127.0.0.1:8000/api/connections/{{id}}/policy
-
-### Structured query (no LLM)
+### Structured query
 POST http://127.0.0.1:8000/api/connections/{{id}}/query/structured
 Content-Type: application/json
 
 {
   "table": "tasks",
-  "columns": ["id", "title", "status", "priority"],
+  "columns": ["id", "title", "status"],
   "filters": [{"column": "status", "op": "=", "value": "TODO"}],
-  "order_by": [{"column": "id", "direction": "asc"}],
-  "limit": 20,
-  "dry_run": false
+  "limit": 20
 }
 
-### Guarded raw SQL (SELECT only)
-POST http://127.0.0.1:8000/api/connections/{{id}}/query/sql
-Content-Type: application/json
-
-{
-  "sql": "SELECT id, title, status FROM tasks WHERE status = 'TODO'",
-  "dry_run": false
-}
-
-### Natural language query (requires LLM_API_KEY in .env)
+### NL query (requires LLM_API_KEY)
 POST http://127.0.0.1:8000/api/connections/{{id}}/query/nl
 Content-Type: application/json
 
 {
-  "prompt": "查出所有状态是 TODO 的任务，只返回 id、title、status",
-  "dry_run": false
+  "prompt": "查出所有 TODO 任务"
 }
 
-### Dry-run NL (preview SQL only)
-POST http://127.0.0.1:8000/api/connections/{{id}}/query/nl
+### Mutate preview: insert
+POST http://127.0.0.1:8000/api/connections/{{id}}/mutate/preview
 Content-Type: application/json
 
 {
-  "prompt": "统计每个负责人有多少任务",
-  "dry_run": true
+  "operation": "insert",
+  "table": "tasks",
+  "values": {
+    "title": "新任务",
+    "assignee_id": 1,
+    "priority": "中",
+    "status": "TODO"
+  }
+}
+
+### Mutate preview: update (WHERE required)
+POST http://127.0.0.1:8000/api/connections/{{id}}/mutate/preview
+Content-Type: application/json
+
+{
+  "operation": "update",
+  "table": "tasks",
+  "set_values": {"status": "DONE"},
+  "filters": [{"column": "id", "op": "=", "value": 1}]
+}
+
+### Confirm mutation (use preview_id from preview response)
+POST http://127.0.0.1:8000/api/connections/{{id}}/mutate/confirm
+Content-Type: application/json
+
+{
+  "preview_id": "{{preview_id}}"
+}
+
+### Cancel pending preview
+POST http://127.0.0.1:8000/api/connections/{{id}}/mutate/cancel/{{preview_id}}
+
+### NL mutate preview (requires LLM_API_KEY; still needs confirm)
+POST http://127.0.0.1:8000/api/connections/{{id}}/mutate/nl
+Content-Type: application/json
+
+{
+  "prompt": "给负责人 1 新建一个优先级为高的任务：修复支付超时"
 }
