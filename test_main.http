@@ -1,0 +1,71 @@
+### Health
+GET http://127.0.0.1:8000/health
+
+### List connections
+GET http://127.0.0.1:8000/api/connections
+
+### Create SQLite connection
+POST http://127.0.0.1:8000/api/connections
+Content-Type: application/json
+
+{
+  "name": "my-sqlite",
+  "dialect": "sqlite",
+  "options": {
+    "path": "demo.db"
+  }
+}
+
+### Create MySQL connection (example)
+POST http://127.0.0.1:8000/api/connections
+Content-Type: application/json
+
+{
+  "name": "my-mysql",
+  "dialect": "mysql",
+  "host": "127.0.0.1",
+  "port": 3306,
+  "database": "mydb",
+  "username": "root",
+  "password": "secret"
+}
+
+### Create PostgreSQL connection (example)
+POST http://127.0.0.1:8000/api/connections
+Content-Type: application/json
+
+{
+  "name": "my-pg",
+  "dialect": "postgresql",
+  "host": "127.0.0.1",
+  "port": 5432,
+  "database": "mydb",
+  "username": "postgres",
+  "password": "secret"
+}
+
+### Create SQL Server connection (example)
+POST http://127.0.0.1:8000/api/connections
+Content-Type: application/json
+
+{
+  "name": "my-mssql",
+  "dialect": "sqlserver",
+  "host": "127.0.0.1",
+  "port": 1433,
+  "database": "mydb",
+  "username": "sa",
+  "password": "secret",
+  "options": {
+    "driver": "ODBC Driver 18 for SQL Server"
+  }
+}
+
+### Test connection (replace {id})
+POST http://127.0.0.1:8000/api/connections/{{id}}/test
+
+### Get full schema
+GET http://127.0.0.1:8000/api/connections/{{id}}/schema
+
+### Get single table schema
+GET http://127.0.0.1:8000/api/connections/{{id}}/schema/tasks
