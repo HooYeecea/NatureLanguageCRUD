@@ -3,6 +3,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, HTTPException
 
 from app import audit, meta_db, policy_store
+from app.analysis_store import analysis_context_text, get_analysis
 from app.db.engines import create_db_engine
 from app.db.schema import get_engine_cfg, introspect_schema
 from app.models import (
@@ -160,6 +161,15 @@ def mutate_nl(connection_id: str, body: NlMutateRequest):
             dialect=connection["dialect"],
             policy=policy,
             schema_tables=schema_tables,
+            analysis_context=analysis_context_text(
+                get_analysis(
+                    connection_id,
+                    [
+                        {"table": t.get("table"), "schema_name": t.get("schema_name")}
+                        for t in (policy.get("tables") or [])
+                    ],
+                )
+            ),
         )
     except LlmNotConfigured as exc:
         audit.write_audit(

@@ -22,21 +22,31 @@ export function InterpretStep({
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [llmConfigured, setLlmConfigured] = useState(false)
+  const [statusText, setStatusText] = useState('正在加载分析…')
 
   useEffect(() => {
     let cancelled = false
     async function run() {
       setBusy(true)
       setError(null)
+      setStatusText('正在检查是否已有分析结果…')
       try {
         const settings = await api.settings()
         if (!cancelled) setLlmConfigured(settings.llm_configured)
-        const interpreted = await api.interpret(
-          connection.id,
-          selectedTables,
-          true,
-        )
-        if (!cancelled) setResult(interpreted)
+
+        // Prefer cache for this table set (force=false)
+        const interpreted = await api.interpret(connection.id, selectedTables, {
+          use_llm: true,
+          force: false,
+        })
+        if (!cancelled) {
+          setResult(interpreted)
+          setStatusText(
+            interpreted.cached
+              ? '已加载缓存的分析结果（可重新分析）'
+              : '分析完成并已保存，可复用',
+          )
+        }
       } catch (e) {
         if (!cancelled) setError(friendlyError(e))
       } finally {
@@ -49,26 +59,52 @@ export function InterpretStep({
     }
   }, [connection.id, selectedTables])
 
+  async function reanalyze() {
+    setBusy(true)
+    setError(null)
+    setStatusText('正在用大模型重新分析…')
+    try {
+      const interpreted = await api.interpret(connection.id, selectedTables, {
+        use_llm: true,
+        force: true,
+      })
+      setResult(interpreted)
+      setStatusText('已重新分析并更新缓存')
+    } catch (e) {
+      setError(friendlyError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <section className="panel">
       <header className="panel-header">
-        <h2>模型解读表结构与关系</h2>
+        <h2>表结构与关系解读</h2>
         <p>
-          先用引擎读取真实 schema，再让大模型补充业务含义与关联说明。
-          {!llmConfigured && ' 当前未配置 LLM，将仅展示元数据关系。'}
+          分析结果会保存，下次相同选表可直接复用；也可重新用大模型分析。
+          {!llmConfigured && ' 当前未配置 LLM 时，仅基于元数据/外键生成摘要。'}
         </p>
       </header>
 
-      {busy && <p className="muted">正在分析所选表…</p>}
+      {busy && <p className="muted">{statusText}</p>}
+      {!busy && statusText && <p className="muted small">{statusText}</p>}
       {error && <p className="err">{error}</p>}
 
       {result && (
         <div className="interpret">
           <div className="badge-row">
-            <span className="badge">{result.source === 'llm' ? 'LLM' : 'Metadata'}</span>
+            <span className="badge">
+              {result.cached ? '缓存' : result.source === 'llm' ? 'LLM' : 'Metadata'}
+            </span>
             <span className="muted">
               表：{result.selected_tables.join(', ')}
             </span>
+            {result.updated_at && (
+              <span className="muted small">
+                更新于 {new Date(result.updated_at).toLocaleString()}
+              </span>
+            )}
           </div>
 
           <p className="overview">{result.overview}</p>
@@ -130,17 +166,27 @@ export function InterpretStep({
       )}
 
       <div className="actions spread">
-        <button type="button" className="btn ghost" onClick={onBack}>
+        <button type="button" className="btn ghost" onClick={onBack} disabled={busy}>
           上一步
         </button>
-        <button
-          type="button"
-          className="btn primary"
-          disabled={!result || busy}
-          onClick={() => result && onNext(result)}
-        >
-          进入工作台
-        </button>
+        <div className="actions">
+          <button
+            type="button"
+            className="btn ghost"
+            disabled={busy}
+            onClick={reanalyze}
+          >
+            重新用大模型分析
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={!result || busy}
+            onClick={() => result && onNext(result)}
+          >
+            进入工作台
+          </button>
+        </div>
       </div>
     </section>
   )

@@ -53,6 +53,8 @@ export type InterpretResult = {
   join_hints: string[]
   warnings: string[]
   source: string
+  cached?: boolean
+  updated_at?: string | null
 }
 
 export type QueryResult = {

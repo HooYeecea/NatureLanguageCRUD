@@ -89,12 +89,19 @@ export const api = {
   interpret: (
     id: string,
     tables: Array<{ table: string; schema_name?: string | null }>,
-    use_llm = true,
+    options: { use_llm?: boolean; force?: boolean } = {},
   ) =>
     request<InterpretResult>(`/api/connections/${id}/workspace/interpret`, {
       method: 'POST',
-      body: JSON.stringify({ tables, use_llm }),
+      body: JSON.stringify({
+        tables,
+        use_llm: options.use_llm ?? true,
+        force: options.force ?? false,
+      }),
     }),
+
+  getAnalysis: (id: string) =>
+    request<InterpretResult>(`/api/connections/${id}/workspace/analysis`),
 
   nlQuery: (id: string, prompt: string, dry_run = false) =>
     request<QueryResult>(`/api/connections/${id}/query/nl`, {

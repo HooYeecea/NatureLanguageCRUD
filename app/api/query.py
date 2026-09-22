@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app import audit, meta_db, policy_store
+from app.analysis_store import analysis_context_text, get_analysis
 from app.db.engines import create_db_engine
 from app.db.schema import get_engine_cfg, introspect_schema
 from app.models import (
@@ -182,12 +183,27 @@ def query_natural_language(connection_id: str, body: NlQueryRequest):
     finally:
         engine.dispose()
 
+    # Prefer only whitelisted tables in the model context
+    allowed_names = {t.get("table") for t in (policy.get("tables") or []) if t.get("allow_select")}
+    if allowed_names:
+        schema_tables = [t for t in schema_tables if t.get("name") in allowed_names]
+
+    analysis = get_analysis(
+        connection_id,
+        [
+            {"table": t.get("table"), "schema_name": t.get("schema_name")}
+            for t in (policy.get("tables") or [])
+        ],
+    )
+    analysis_ctx = analysis_context_text(analysis)
+
     try:
         guarded, explanation, reply = nl_to_guarded_sql(
             body.prompt,
             dialect=connection["dialect"],
             policy=policy,
             schema_tables=schema_tables,
+            analysis_context=analysis_ctx,
         )
     except LlmNotConfigured as exc:
         audit.write_audit(

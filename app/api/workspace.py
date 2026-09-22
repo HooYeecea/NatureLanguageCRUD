@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app import audit, meta_db, policy_store
+from app.analysis_store import get_analysis, save_analysis
 from app.db.engines import create_db_engine
 from app.db.schema import get_engine_cfg, introspect_schema
 from app.models import AccessPolicyOut, AccessPolicyUpsert, TablePolicy
@@ -42,6 +43,7 @@ class SelectTablesRequest(BaseModel):
 class InterpretRequest(BaseModel):
     tables: list[SelectedTable] = Field(default_factory=list)
     use_llm: bool = True
+    force: bool = False  # True = ignore cache and re-analyze
 
 
 class InterpretResponse(BaseModel):
@@ -54,6 +56,8 @@ class InterpretResponse(BaseModel):
     join_hints: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     source: str = "metadata"
+    cached: bool = False
+    updated_at: str | None = None
 
 
 @router.get("/api/settings", response_model=SettingsOut)
@@ -140,6 +144,25 @@ def interpret_selected_tables(connection_id: str, body: InterpretRequest):
     if not body.tables:
         raise HTTPException(status_code=400, detail="Select at least one table")
 
+    table_refs = [t.model_dump() for t in body.tables]
+
+    if not body.force:
+        cached = get_analysis(connection_id, table_refs)
+        if cached:
+            return InterpretResponse(
+                connection_id=connection_id,
+                dialect=data["dialect"],
+                selected_tables=cached.get("selected_tables") or [t.table for t in body.tables],
+                overview=cached.get("overview") or "",
+                tables=cached.get("tables") or [],
+                relationships=cached.get("relationships") or [],
+                join_hints=cached.get("join_hints") or [],
+                warnings=cached.get("warnings") or [],
+                source=cached.get("source") or "cache",
+                cached=True,
+                updated_at=cached["updated_at"].isoformat() if cached.get("updated_at") else None,
+            )
+
     engine = create_db_engine(get_engine_cfg(data))
     try:
         overview = introspect_schema(engine, connection_id, data["dialect"])
@@ -148,22 +171,17 @@ def interpret_selected_tables(connection_id: str, body: InterpretRequest):
     finally:
         engine.dispose()
 
-    wanted = {(t.schema_name, t.table) for t in body.tables}
     selected = []
     for t in overview.tables:
-        key = (t.schema_name, t.name)
-        key2 = (None, t.name)
-        if key in wanted or key2 in wanted or (None, t.name) in {(None, x.table) for x in body.tables}:
-            # Match by table name primarily; schema if provided
-            match = False
-            for req in body.tables:
-                if req.table != t.name:
-                    continue
-                if req.schema_name is None or t.schema_name is None or req.schema_name == t.schema_name:
-                    match = True
-                    break
-            if match:
-                selected.append(t.model_dump())
+        match = False
+        for req in body.tables:
+            if req.table != t.name:
+                continue
+            if req.schema_name is None or t.schema_name is None or req.schema_name == t.schema_name:
+                match = True
+                break
+        if match:
+            selected.append(t.model_dump())
 
     if not selected:
         raise HTTPException(status_code=400, detail="None of the selected tables were found in schema")
@@ -184,6 +202,9 @@ def interpret_selected_tables(connection_id: str, body: InterpretRequest):
         warnings.append(f"LLM interpret failed, used metadata fallback: {exc}")
         result["warnings"] = warnings
 
+    result["dialect"] = data["dialect"]
+    saved = save_analysis(connection_id, table_refs, result)
+
     return InterpretResponse(
         connection_id=connection_id,
         dialect=data["dialect"],
@@ -194,4 +215,42 @@ def interpret_selected_tables(connection_id: str, body: InterpretRequest):
         join_hints=result.get("join_hints") or [],
         warnings=result.get("warnings") or [],
         source=result.get("source") or "metadata",
+        cached=False,
+        updated_at=saved["updated_at"].isoformat() if saved and saved.get("updated_at") else None,
+    )
+
+
+@router.get(
+    "/api/connections/{connection_id}/workspace/analysis",
+    response_model=InterpretResponse,
+)
+def get_cached_analysis(connection_id: str):
+    data = meta_db.get_connection(connection_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Connection not found")
+
+    policy = policy_store.get_policy(connection_id)
+    tables = [
+        {"table": t.get("table"), "schema_name": t.get("schema_name")}
+        for t in (policy.get("tables") or [])
+    ]
+    if not tables:
+        raise HTTPException(status_code=404, detail="No selected tables / cached analysis")
+
+    cached = get_analysis(connection_id, tables)
+    if not cached:
+        raise HTTPException(status_code=404, detail="No cached analysis for current table set")
+
+    return InterpretResponse(
+        connection_id=connection_id,
+        dialect=data["dialect"],
+        selected_tables=cached.get("selected_tables") or [t["table"] for t in tables],
+        overview=cached.get("overview") or "",
+        tables=cached.get("tables") or [],
+        relationships=cached.get("relationships") or [],
+        join_hints=cached.get("join_hints") or [],
+        warnings=cached.get("warnings") or [],
+        source=cached.get("source") or "cache",
+        cached=True,
+        updated_at=cached["updated_at"].isoformat() if cached.get("updated_at") else None,
     )

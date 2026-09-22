@@ -84,6 +84,7 @@ def nl_to_guarded_sql(
     dialect: str,
     policy: dict[str, Any],
     schema_tables: list[dict[str, Any]],
+    analysis_context: Optional[str] = None,
 ) -> tuple[Any, Optional[str], Optional[str]]:
     """
     Returns (GuardedQuery|None, explanation, assistant_text_if_no_tool).
@@ -91,6 +92,7 @@ def nl_to_guarded_sql(
     client = _client()
     schema_text = _schema_prompt(policy, schema_tables)
     max_rows = policy.get("max_rows_per_query") or 500
+    analysis_block = f"\n{analysis_context}\n" if analysis_context else ""
 
     messages = [
         {
@@ -101,8 +103,16 @@ def nl_to_guarded_sql(
                 "You must only call run_select_sql with a single SELECT. "
                 "Never invent tables/columns outside the schema. "
                 f"Respect max rows <= {max_rows}. "
+                "Rules for accurate SQL:\n"
+                "1) If the user asks about a specific entity (name/role/id), ALWAYS add a WHERE filter; "
+                "do not return the whole table.\n"
+                "2) Prefer exact match (=) for ids; for Chinese labels use = first, or LIKE only if needed.\n"
+                "3) If permissions/details live in related tables, use JOIN based on analysis hints / foreign keys.\n"
+                "4) Select only needed columns; never invent column names (watch typos).\n"
+                "5) If unclear, still produce the best filtered SELECT rather than dumping all rows.\n"
                 "If the request is not a read query, explain that writes are not available on this endpoint.\n"
                 f"Allowed schema:\n{schema_text}"
+                f"{analysis_block}"
             ),
         },
         {"role": "user", "content": prompt},

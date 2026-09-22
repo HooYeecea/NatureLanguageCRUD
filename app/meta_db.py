@@ -110,6 +110,22 @@ def init_meta_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_analyses (
+                id TEXT PRIMARY KEY,
+                connection_id TEXT NOT NULL,
+                tables_key TEXT NOT NULL,
+                tables_json TEXT NOT NULL,
+                analysis_json TEXT NOT NULL,
+                source TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(connection_id, tables_key),
+                FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE
+            )
+            """
+        )
 
 
 def _row_to_dict(row: sqlite3.Row, include_password: bool = False) -> dict[str, Any]:
@@ -236,5 +252,7 @@ def update_connection(conn_id: str, payload: dict[str, Any]) -> Optional[dict[st
 def delete_connection(conn_id: str) -> bool:
     with meta_conn() as conn:
         conn.execute("DELETE FROM access_policies WHERE connection_id = ?", (conn_id,))
+        conn.execute("DELETE FROM pending_mutations WHERE connection_id = ?", (conn_id,))
+        conn.execute("DELETE FROM schema_analyses WHERE connection_id = ?", (conn_id,))
         cur = conn.execute("DELETE FROM connections WHERE id = ?", (conn_id,))
         return cur.rowcount > 0
