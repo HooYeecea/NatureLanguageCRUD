@@ -1,7 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { api } from '../api'
 import { friendlyError } from '../errors'
 import type { Settings } from '../types'
+import { RoundedSelect } from './RoundedSelect'
 
 type Props = {
   open: boolean
@@ -29,6 +30,8 @@ const MODEL_PRESETS: Array<{ label: string; value: string }> = [
 ]
 
 const CUSTOM = '__custom__'
+const MIN_W = 420
+const MIN_H = 420
 
 export function SettingsModal({ open, onClose, onSaved }: Props) {
   const [loading, setLoading] = useState(false)
@@ -41,6 +44,13 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
   const [modelPreset, setModelPreset] = useState('deepseek-chat')
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
+  const [size, setSize] = useState({ width: 520, height: 560 })
+  const dragRef = useRef<{
+    startX: number
+    startY: number
+    startW: number
+    startH: number
+  } | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -67,7 +77,43 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
       .finally(() => setLoading(false))
   }, [open])
 
+  useEffect(() => {
+    function onMove(e: PointerEvent) {
+      if (!dragRef.current) return
+      const dx = e.clientX - dragRef.current.startX
+      const dy = e.clientY - dragRef.current.startY
+      const maxW = Math.max(MIN_W, window.innerWidth - 32)
+      const maxH = Math.max(MIN_H, window.innerHeight - 32)
+      setSize({
+        width: Math.min(maxW, Math.max(MIN_W, dragRef.current.startW + dx)),
+        height: Math.min(maxH, Math.max(MIN_H, dragRef.current.startH + dy)),
+      })
+    }
+    function onUp() {
+      dragRef.current = null
+      document.body.style.userSelect = ''
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+  }, [])
+
   if (!open) return null
+
+  function startResize(e: ReactPointerEvent<HTMLButtonElement>) {
+    e.preventDefault()
+    e.stopPropagation()
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startW: size.width,
+      startH: size.height,
+    }
+    document.body.style.userSelect = 'none'
+  }
 
   function onBaseUrlPresetChange(value: string) {
     setBaseUrlPreset(value)
@@ -133,125 +179,121 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
-        className="modal"
+        className="modal resizable"
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
+        style={{ width: size.width, height: size.height }}
         onClick={(e) => e.stopPropagation()}
       >
+        <button
+          type="button"
+          className="modal-close"
+          aria-label="关闭"
+          onClick={onClose}
+        >
+          ×
+        </button>
+
         <header className="modal-header">
-          <div>
-            <h2 id="settings-title">API 设置</h2>
-            <p className="muted">配置大模型 API，用于表关系解读与自然语言查写。</p>
-          </div>
-          <button type="button" className="btn ghost" onClick={onClose}>
-            关闭
-          </button>
+          <h2 id="settings-title">API 设置</h2>
+          <p className="muted">配置大模型 API，用于表关系解读与自然语言查写。</p>
         </header>
 
-        {loading ? (
-          <p className="muted">加载中…</p>
-        ) : (
-          <form className="form" onSubmit={onSubmit}>
-            <div className="settings-status">
-              <span className={`badge ${settings?.llm_configured ? 'ok' : ''}`}>
-                {settings?.llm_configured ? '已配置' : '未配置'}
-              </span>
-              {settings?.api_key_masked && (
-                <span className="muted small">当前 Key：{settings.api_key_masked}</span>
-              )}
-              {settings?.source && (
-                <span className="muted small">来源：{settings.source}</span>
-              )}
-            </div>
+        <div className="modal-body">
+          {loading ? (
+            <p className="muted">加载中…</p>
+          ) : (
+            <form className="form" onSubmit={onSubmit}>
+              <div className="settings-status">
+                <span className={`badge ${settings?.llm_configured ? 'ok' : ''}`}>
+                  {settings?.llm_configured ? '已配置' : '未配置'}
+                </span>
+                {settings?.api_key_masked && (
+                  <span className="muted small">当前 Key：{settings.api_key_masked}</span>
+                )}
+                {settings?.source && (
+                  <span className="muted small">来源：{settings.source}</span>
+                )}
+              </div>
 
-            <label>
-              API Key
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder={
-                  settings?.llm_configured
-                    ? '留空则保持现有 Key 不变'
-                    : '例如 sk-...'
-                }
-                autoComplete="off"
-              />
-            </label>
+              <label>
+                API Key
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={
+                    settings?.llm_configured
+                      ? '留空则保持现有 Key 不变'
+                      : '例如 sk-...'
+                  }
+                  autoComplete="off"
+                />
+              </label>
 
-            <div className="combo-field">
-              <span className="combo-label">Base URL</span>
-              <div className="combo-row">
-                <div className="select-shell">
-                  <select
-                    className="select-control"
+              <div className="combo-field">
+                <span className="combo-label">Base URL</span>
+                <div className="combo-row">
+                  <RoundedSelect
+                    ariaLabel="选择常用 Base URL"
                     value={baseUrlPreset}
-                    onChange={(e) => onBaseUrlPresetChange(e.target.value)}
-                    aria-label="选择常用 Base URL"
-                  >
-                    {BASE_URL_PRESETS.map((p) => (
-                      <option key={p.value} value={p.value}>
-                        {p.label}
-                      </option>
-                    ))}
-                    <option value={CUSTOM}>自定义</option>
-                  </select>
+                    options={[...BASE_URL_PRESETS, { label: '自定义', value: CUSTOM }]}
+                    onChange={onBaseUrlPresetChange}
+                  />
+                  <input
+                    value={baseUrl}
+                    onChange={(e) => onBaseUrlInput(e.target.value)}
+                    placeholder="可选手动输入完整地址"
+                    required
+                  />
                 </div>
-                <input
-                  value={baseUrl}
-                  onChange={(e) => onBaseUrlInput(e.target.value)}
-                  placeholder="可选手动输入完整地址"
-                  required
-                />
               </div>
-            </div>
 
-            <div className="combo-field">
-              <span className="combo-label">Model</span>
-              <div className="combo-row">
-                <div className="select-shell">
-                  <select
-                    className="select-control"
+              <div className="combo-field">
+                <span className="combo-label">Model</span>
+                <div className="combo-row">
+                  <RoundedSelect
+                    ariaLabel="选择常用 Model"
                     value={modelPreset}
-                    onChange={(e) => onModelPresetChange(e.target.value)}
-                    aria-label="选择常用 Model"
-                  >
-                    {MODEL_PRESETS.map((p) => (
-                      <option key={p.value} value={p.value}>
-                        {p.label}
-                      </option>
-                    ))}
-                    <option value={CUSTOM}>自定义</option>
-                  </select>
+                    options={[...MODEL_PRESETS, { label: '自定义', value: CUSTOM }]}
+                    onChange={onModelPresetChange}
+                  />
+                  <input
+                    value={model}
+                    onChange={(e) => onModelInput(e.target.value)}
+                    placeholder="可选手动输入模型名"
+                    required
+                  />
                 </div>
-                <input
-                  value={model}
-                  onChange={(e) => onModelInput(e.target.value)}
-                  placeholder="可选手动输入模型名"
-                  required
-                />
               </div>
-            </div>
 
-            <div className="actions spread">
-              <button
-                type="button"
-                className="btn ghost"
-                disabled={saving || !settings?.llm_configured}
-                onClick={clearKey}
-              >
-                清除 Key
-              </button>
-              <button type="submit" className="btn primary" disabled={saving}>
-                {saving ? '保存中…' : '保存'}
-              </button>
-            </div>
-          </form>
-        )}
+              <div className="actions spread">
+                <button
+                  type="button"
+                  className="btn ghost"
+                  disabled={saving || !settings?.llm_configured}
+                  onClick={clearKey}
+                >
+                  清除 Key
+                </button>
+                <button type="submit" className="btn primary" disabled={saving}>
+                  {saving ? '保存中…' : '保存'}
+                </button>
+              </div>
+            </form>
+          )}
 
-        {ok && <p className="ok">{ok}</p>}
-        {error && <p className="err">{error}</p>}
+          {ok && <p className="ok">{ok}</p>}
+          {error && <p className="err">{error}</p>}
+        </div>
+
+        <button
+          type="button"
+          className="modal-resize-handle"
+          aria-label="拖动调整弹窗大小"
+          onPointerDown={startResize}
+        />
       </div>
     </div>
   )
