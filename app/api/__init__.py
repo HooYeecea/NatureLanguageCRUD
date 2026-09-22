@@ -3,6 +3,7 @@ from app.api.connections import router as connections_router
 from app.api.mutate import router as mutate_router
 from app.api.policies import router as policies_router
 from app.api.query import router as query_router
+from app.api.workspace import router as workspace_router
 
 __all__ = [
     "audit_router",
@@ -10,4 +11,5 @@ __all__ = [
     "policies_router",
     "query_router",
     "mutate_router",
+    "workspace_router",
 ]

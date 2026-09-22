@@ -6,3 +6,5 @@ __pycache__/
 workbench.db
 *.egg-info/
 .pytest_cache/
+web/node_modules/
+web/dist/

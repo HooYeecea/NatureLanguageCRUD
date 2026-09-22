@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app import meta_db
 from app import policy_store
@@ -10,6 +11,7 @@ from app.api import (
     mutate_router,
     policies_router,
     query_router,
+    workspace_router,
 )
 from app.config import DEMO_DB_PATH
 from app.demo_seed import ensure_demo_db
@@ -30,7 +32,6 @@ def bootstrap() -> None:
             }
         )
 
-    # Seed a usable demo policy once (select/insert/update; delete off)
     policy = policy_store.get_policy(demo["id"])
     if not policy.get("tables"):
         policy_store.upsert_policy(
@@ -79,6 +80,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/health")
 def health():
@@ -90,3 +102,4 @@ app.include_router(policies_router)
 app.include_router(query_router)
 app.include_router(mutate_router)
 app.include_router(audit_router)
+app.include_router(workspace_router)
