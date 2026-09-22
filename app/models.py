@@ -131,3 +131,49 @@ class PolicyCheckResult(BaseModel):
     allowed: bool
     reason: Optional[str] = None
     effective_columns: Optional[list[str]] = None
+
+
+FilterOp = Literal["=", "!=", "<>", ">", ">=", "<", "<=", "like", "ilike"]
+
+
+class QueryFilter(BaseModel):
+    column: str
+    op: FilterOp = "="
+    value: Any
+
+
+class OrderBy(BaseModel):
+    column: str
+    direction: Literal["asc", "desc"] = "asc"
+
+
+class StructuredQueryRequest(BaseModel):
+    table: str
+    schema_name: Optional[str] = None
+    columns: Optional[list[str]] = None
+    filters: list[QueryFilter] = Field(default_factory=list)
+    order_by: list[OrderBy] = Field(default_factory=list)
+    limit: Optional[int] = Field(None, ge=1)
+    dry_run: bool = False
+
+
+class RawSqlQueryRequest(BaseModel):
+    sql: str = Field(..., min_length=1)
+    dry_run: bool = False
+
+
+class NlQueryRequest(BaseModel):
+    prompt: str = Field(..., min_length=1)
+    dry_run: bool = False
+
+
+class QueryResult(BaseModel):
+    sql: str
+    tables: list[str] = Field(default_factory=list)
+    limit: Optional[int] = None
+    dry_run: bool = False
+    columns: list[str] = Field(default_factory=list)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    row_count: int = 0
+    explanation: Optional[str] = None
+    reply: Optional[str] = None

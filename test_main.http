@@ -4,66 +4,45 @@ GET http://127.0.0.1:8000/health
 ### List connections
 GET http://127.0.0.1:8000/api/connections
 
-### Create SQLite connection
-POST http://127.0.0.1:8000/api/connections
-Content-Type: application/json
-
-{
-  "name": "my-sqlite",
-  "dialect": "sqlite",
-  "options": {
-    "path": "demo.db"
-  }
-}
-
-### Test connection (replace {{id}})
-POST http://127.0.0.1:8000/api/connections/{{id}}/test
-
-### Get full schema
-GET http://127.0.0.1:8000/api/connections/{{id}}/schema
-
 ### Get policy
 GET http://127.0.0.1:8000/api/connections/{{id}}/policy
 
-### Replace policy (whitelist tables/columns/ops)
-PUT http://127.0.0.1:8000/api/connections/{{id}}/policy
-Content-Type: application/json
-
-{
-  "require_where_for_update": true,
-  "require_where_for_delete": true,
-  "max_rows_per_mutation": 100,
-  "max_rows_per_query": 500,
-  "tables": [
-    {
-      "table": "tasks",
-      "allowed_columns": ["id", "title", "status", "priority", "assignee_id"],
-      "denied_columns": [],
-      "allow_select": true,
-      "allow_insert": true,
-      "allow_update": true,
-      "allow_delete": false
-    },
-    {
-      "table": "users",
-      "denied_columns": [],
-      "allow_select": true,
-      "allow_insert": false,
-      "allow_update": false,
-      "allow_delete": false
-    }
-  ]
-}
-
-### Allow all tables from live schema (loose config helper)
-POST http://127.0.0.1:8000/api/connections/{{id}}/policy/allow-all?allow_delete=false
-
-### Check whether an operation is allowed
-POST http://127.0.0.1:8000/api/connections/{{id}}/policy/check
+### Structured query (no LLM)
+POST http://127.0.0.1:8000/api/connections/{{id}}/query/structured
 Content-Type: application/json
 
 {
   "table": "tasks",
-  "operation": "delete",
-  "columns": ["id"]
+  "columns": ["id", "title", "status", "priority"],
+  "filters": [{"column": "status", "op": "=", "value": "TODO"}],
+  "order_by": [{"column": "id", "direction": "asc"}],
+  "limit": 20,
+  "dry_run": false
+}
+
+### Guarded raw SQL (SELECT only)
+POST http://127.0.0.1:8000/api/connections/{{id}}/query/sql
+Content-Type: application/json
+
+{
+  "sql": "SELECT id, title, status FROM tasks WHERE status = 'TODO'",
+  "dry_run": false
+}
+
+### Natural language query (requires LLM_API_KEY in .env)
+POST http://127.0.0.1:8000/api/connections/{{id}}/query/nl
+Content-Type: application/json
+
+{
+  "prompt": "查出所有状态是 TODO 的任务，只返回 id、title、status",
+  "dry_run": false
+}
+
+### Dry-run NL (preview SQL only)
+POST http://127.0.0.1:8000/api/connections/{{id}}/query/nl
+Content-Type: application/json
+
+{
+  "prompt": "统计每个负责人有多少任务",
+  "dry_run": true
 }

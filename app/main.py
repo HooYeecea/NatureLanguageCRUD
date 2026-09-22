@@ -4,7 +4,7 @@ from fastapi import FastAPI
 
 from app import meta_db
 from app import policy_store
-from app.api import connections_router, policies_router
+from app.api import connections_router, policies_router, query_router
 from app.config import DEMO_DB_PATH
 from app.demo_seed import ensure_demo_db
 
@@ -81,3 +81,4 @@ def health():
 
 app.include_router(connections_router)
 app.include_router(policies_router)
+app.include_router(query_router)
