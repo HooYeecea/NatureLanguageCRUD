@@ -69,15 +69,45 @@ export function friendlyError(raw: unknown, fallback = '操作失败，请稍后
     return 'SQLite 文件路径无效或无法打开，请检查路径是否正确。'
   }
 
-  // Strip long traceback / sqlalchemy prefixes for leftover cases
+  if (
+    lower.includes('llm request failed') ||
+    lower.includes('is not defined') ||
+    lower.includes('internal server error') ||
+    lower.includes('traceback')
+  ) {
+    return '写入/查询服务暂时异常，请稍后重试；若连续失败，请重启后端服务。'
+  }
+
+  if (lower.includes('no mutation proposed')) {
+    return '未能理解为写入操作，请换一种更明确的说法，例如「向 xxx 表新增一条…」。'
+  }
+
+  if (lower.includes('requires a where') || lower.includes('requires where')) {
+    return '按安全策略，更新/删除必须带条件，请说明要改哪一条记录。'
+  }
+
+  // Strip long traceback / sqlalchemy / wrapper prefixes for leftover cases
   const cleaned = text
+    .replace(/^llm request failed:\s*/i, '')
+    .replace(/^query execution failed:\s*/i, '')
+    .replace(/^mutation failed:\s*/i, '')
     .replace(/\(.*?Error\)\s*/g, '')
     .replace(/sqlalchemy\.[a-zA-Z.]+:\s*/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
 
-  if (cleaned.length > 160) {
-    return `${cleaned.slice(0, 160)}…`
+  // Still looks like raw developer exception → hide it
+  if (
+    /name '.*' is not defined/i.test(cleaned) ||
+    /^[A-Za-z_]+Error:/i.test(cleaned) ||
+    cleaned.includes('File "') ||
+    cleaned.includes('line ')
+  ) {
+    return fallback
+  }
+
+  if (cleaned.length > 120) {
+    return `${cleaned.slice(0, 120)}…`
   }
   return cleaned || fallback
 }

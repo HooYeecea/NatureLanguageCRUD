@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from openai import OpenAI
 
+from app.mutate.builder import MutatePlan, build_mutate_plan
 from app.query.nl import LlmNotConfigured
 from app.query.sql_guard import SqlGuardError
 from app.settings_store import get_llm_settings

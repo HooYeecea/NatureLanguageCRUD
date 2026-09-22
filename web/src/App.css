@@ -84,38 +84,60 @@ textarea {
 
 .modal {
   width: min(520px, 100%);
+  max-width: calc(100vw - 2rem);
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 1.2rem 1.3rem 1.4rem;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  align-items: start;
-  margin-bottom: 1rem;
+.modal .form {
+  width: 100%;
+  min-width: 0;
 }
 
-.modal-header h2 {
-  margin: 0;
-  font-family: 'Fraunces', Georgia, serif;
-  font-size: 1.25rem;
+.modal .form input,
+.modal .form select,
+.modal .combo-field select,
+.modal .combo-field input {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
-.settings-status {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.6rem;
-  align-items: center;
-  margin-bottom: 0.2rem;
+.combo-field {
+  display: grid;
+  gap: 0.4rem;
+  width: 100%;
+  min-width: 0;
 }
 
-.badge.ok {
-  background: #d8eee8;
-  color: var(--primary);
+.combo-label {
+  font-weight: 600;
+}
+
+.combo-row {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.combo-field select,
+.combo-field input {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.7rem 0.85rem;
+  background: #fff;
+}
+
+.combo-field select {
+  color: var(--ink);
 }
 
 .brand {
@@ -530,5 +552,9 @@ td {
 
   .stepper-label {
     font-size: 0.9rem;
+  }
+
+  .combo-row {
+    grid-template-columns: 1fr;
   }
 }

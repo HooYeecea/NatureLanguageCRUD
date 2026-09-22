@@ -197,7 +197,7 @@ def mutate_nl(connection_id: str, body: NlMutateRequest):
             summary="LLM request failed",
             detail={"error": str(exc), "prompt": body.prompt},
         )
-        raise HTTPException(status_code=502, detail=f"LLM request failed: {exc}") from exc
+        raise HTTPException(status_code=502, detail="大模型请求失败，请检查 API 设置后重试") from exc
 
     if plan is None:
         audit.write_audit(

@@ -9,6 +9,27 @@ type Props = {
   onSaved?: (settings: Settings) => void
 }
 
+const BASE_URL_PRESETS: Array<{ label: string; value: string }> = [
+  { label: 'DeepSeek', value: 'https://api.deepseek.com' },
+  { label: 'OpenAI', value: 'https://api.openai.com/v1' },
+  { label: 'Moonshot', value: 'https://api.moonshot.cn/v1' },
+  { label: '通义千问', value: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  { label: 'Ollama', value: 'http://127.0.0.1:11434/v1' },
+]
+
+const MODEL_PRESETS: Array<{ label: string; value: string }> = [
+  { label: 'deepseek-chat', value: 'deepseek-chat' },
+  { label: 'deepseek-reasoner', value: 'deepseek-reasoner' },
+  { label: 'gpt-4o', value: 'gpt-4o' },
+  { label: 'gpt-4o-mini', value: 'gpt-4o-mini' },
+  { label: 'moonshot-v1-8k', value: 'moonshot-v1-8k' },
+  { label: 'qwen-plus', value: 'qwen-plus' },
+  { label: 'qwen-turbo', value: 'qwen-turbo' },
+  { label: 'llama3.1', value: 'llama3.1' },
+]
+
+const CUSTOM = '__custom__'
+
 export function SettingsModal({ open, onClose, onSaved }: Props) {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -16,6 +37,8 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('https://api.deepseek.com')
   const [model, setModel] = useState('deepseek-chat')
+  const [baseUrlPreset, setBaseUrlPreset] = useState('https://api.deepseek.com')
+  const [modelPreset, setModelPreset] = useState('deepseek-chat')
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
 
@@ -29,14 +52,46 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
       .settings()
       .then((s) => {
         setSettings(s)
-        setBaseUrl(s.llm_base_url || 'https://api.deepseek.com')
-        setModel(s.llm_model || 'deepseek-chat')
+        const url = s.llm_base_url || 'https://api.deepseek.com'
+        const mdl = s.llm_model || 'deepseek-chat'
+        setBaseUrl(url)
+        setModel(mdl)
+        setBaseUrlPreset(
+          BASE_URL_PRESETS.some((p) => p.value === url) ? url : CUSTOM,
+        )
+        setModelPreset(
+          MODEL_PRESETS.some((p) => p.value === mdl) ? mdl : CUSTOM,
+        )
       })
       .catch((e) => setError(friendlyError(e)))
       .finally(() => setLoading(false))
   }, [open])
 
   if (!open) return null
+
+  function onBaseUrlPresetChange(value: string) {
+    setBaseUrlPreset(value)
+    if (value !== CUSTOM) setBaseUrl(value)
+  }
+
+  function onModelPresetChange(value: string) {
+    setModelPreset(value)
+    if (value !== CUSTOM) setModel(value)
+  }
+
+  function onBaseUrlInput(value: string) {
+    setBaseUrl(value)
+    setBaseUrlPreset(
+      BASE_URL_PRESETS.some((p) => p.value === value) ? value : CUSTOM,
+    )
+  }
+
+  function onModelInput(value: string) {
+    setModel(value)
+    setModelPreset(
+      MODEL_PRESETS.some((p) => p.value === value) ? value : CUSTOM,
+    )
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -125,25 +180,53 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
               />
             </label>
 
-            <label>
-              Base URL
-              <input
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder="https://api.deepseek.com"
-                required
-              />
-            </label>
+            <div className="combo-field">
+              <span className="combo-label">Base URL</span>
+              <div className="combo-row">
+                <select
+                  value={baseUrlPreset}
+                  onChange={(e) => onBaseUrlPresetChange(e.target.value)}
+                  aria-label="选择常用 Base URL"
+                >
+                  {BASE_URL_PRESETS.map((p) => (
+                    <option key={p.value} value={p.value}>
+                      {p.label}
+                    </option>
+                  ))}
+                  <option value={CUSTOM}>自定义</option>
+                </select>
+                <input
+                  value={baseUrl}
+                  onChange={(e) => onBaseUrlInput(e.target.value)}
+                  placeholder="可选手动输入完整地址"
+                  required
+                />
+              </div>
+            </div>
 
-            <label>
-              Model
-              <input
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder="deepseek-chat"
-                required
-              />
-            </label>
+            <div className="combo-field">
+              <span className="combo-label">Model</span>
+              <div className="combo-row">
+                <select
+                  value={modelPreset}
+                  onChange={(e) => onModelPresetChange(e.target.value)}
+                  aria-label="选择常用 Model"
+                >
+                  {MODEL_PRESETS.map((p) => (
+                    <option key={p.value} value={p.value}>
+                      {p.label}
+                    </option>
+                  ))}
+                  <option value={CUSTOM}>自定义</option>
+                </select>
+                <input
+                  value={model}
+                  onChange={(e) => onModelInput(e.target.value)}
+                  placeholder="可选手动输入模型名"
+                  required
+                />
+              </div>
+            </div>
 
             <div className="actions spread">
               <button
