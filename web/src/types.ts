@@ -84,6 +84,8 @@ export type Settings = {
   llm_configured: boolean
   llm_base_url?: string | null
   llm_model?: string | null
+  api_key_masked?: string | null
+  source?: string | null
 }
 
 export type WizardState = {

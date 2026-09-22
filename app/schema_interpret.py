@@ -7,8 +7,7 @@ from typing import Any
 
 from openai import OpenAI
 
-from app.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
-from app.query.nl import LlmNotConfigured
+from app.settings_store import get_llm_settings
 
 
 def _fallback_from_metadata(tables: list[dict[str, Any]]) -> dict[str, Any]:
@@ -55,7 +54,7 @@ def _fallback_from_metadata(tables: list[dict[str, Any]]) -> dict[str, Any]:
         "warnings": (
             []
             if relationships
-            else ["未检测到外键。可配置 LLM_API_KEY 让模型推断可能的逻辑关系。"]
+            else ["未检测到外键。可在右上角「API 设置」配置大模型以推断逻辑关系。"]
         ),
         "source": "metadata",
     }
@@ -70,9 +69,11 @@ def interpret_schema(
     fallback = _fallback_from_metadata(tables)
     if not use_llm:
         return fallback
-    if not LLM_API_KEY:
+
+    cfg = get_llm_settings()
+    if not cfg["api_key"]:
         fallback["warnings"] = list(fallback.get("warnings") or []) + [
-            "未配置 LLM_API_KEY，当前仅返回元数据关系摘要。"
+            "未配置 LLM API Key，当前仅返回元数据关系摘要。"
         ]
         return fallback
 
@@ -96,9 +97,9 @@ def interpret_schema(
             }
         )
 
-    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL or None)
+    client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"] or None)
     response = client.chat.completions.create(
-        model=LLM_MODEL,
+        model=cfg["model"],
         messages=[
             {
                 "role": "system",
@@ -135,15 +136,17 @@ def interpret_schema(
             "warnings": ["模型返回非 JSON，已保留原文 overview。"],
         }
     parsed["source"] = "llm"
-    # Merge FK facts if model omitted them
     if not parsed.get("relationships") and fallback["relationships"]:
         parsed["relationships"] = fallback["relationships"]
     return parsed
 
 
 def llm_status() -> dict[str, Any]:
+    cfg = get_llm_settings()
     return {
-        "configured": bool(LLM_API_KEY),
-        "base_url": LLM_BASE_URL,
-        "model": LLM_MODEL,
+        "configured": cfg["configured"],
+        "base_url": cfg["base_url"],
+        "model": cfg["model"],
+        "api_key_masked": cfg.get("api_key_masked"),
+        "source": cfg.get("source"),
     }

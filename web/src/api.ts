@@ -30,6 +30,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   settings: () => request<Settings>('/api/settings'),
 
+  updateSettings: (body: {
+    api_key?: string
+    base_url?: string
+    model?: string
+    clear_api_key?: boolean
+  }) =>
+    request<Settings>('/api/settings', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+
   listConnections: () => request<Connection[]>('/api/connections'),
 
   createConnection: (body: {

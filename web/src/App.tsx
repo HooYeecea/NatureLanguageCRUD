@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Stepper } from './components/Stepper'
+import { SettingsModal } from './components/SettingsModal'
 import { ConnectStep } from './steps/ConnectStep'
 import { InterpretStep } from './steps/InterpretStep'
 import { SelectTablesStep } from './steps/SelectTablesStep'
 import { WorkbenchStep } from './steps/WorkbenchStep'
-import type { Connection, InterpretResult, SchemaOverview } from './types'
+import { api } from './api'
+import type { Connection, InterpretResult, SchemaOverview, Settings } from './types'
 import './App.css'
 
 const LABELS = ['连接数据库', '选择表', '解读关系', '工作台']
@@ -17,6 +19,12 @@ export default function App() {
     Array<{ table: string; schema_name?: string | null }>
   >([])
   const [interpret, setInterpret] = useState<InterpretResult | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settings, setSettings] = useState<Settings | null>(null)
+
+  useEffect(() => {
+    api.settings().then(setSettings).catch(() => setSettings(null))
+  }, [])
 
   function restart() {
     setStep(1)
@@ -33,7 +41,17 @@ export default function App() {
           <p className="brand">NL CRUD Workbench</p>
           <h1>自然语言数据库工作台</h1>
         </div>
-        <p className="tagline">连接 → 选表 → 理解结构 → 安全操作</p>
+        <div className="topbar-right">
+          <p className="tagline">连接 → 选表 → 理解结构 → 安全操作</p>
+          <button
+            type="button"
+            className="btn ghost settings-btn"
+            onClick={() => setSettingsOpen(true)}
+          >
+            API 设置
+            <span className={`dot ${settings?.llm_configured ? 'on' : ''}`} />
+          </button>
+        </div>
       </header>
 
       <Stepper step={step} labels={LABELS} />
@@ -87,6 +105,12 @@ export default function App() {
           当前 schema 已加载 {schema.tables.length} 张表 · 已选 {selectedTables.length} 张
         </footer>
       )}
+
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onSaved={(s) => setSettings(s)}
+      />
     </div>
   )
 }

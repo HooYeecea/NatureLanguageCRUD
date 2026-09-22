@@ -7,8 +7,8 @@ from typing import Any, Optional
 
 from openai import OpenAI
 
-from app.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 from app.query.sql_guard import SqlGuardError, guard_select_sql
+from app.settings_store import get_llm_settings
 
 
 class LlmNotConfigured(Exception):
@@ -16,11 +16,12 @@ class LlmNotConfigured(Exception):
 
 
 def _client() -> OpenAI:
-    if not LLM_API_KEY:
+    cfg = get_llm_settings()
+    if not cfg["api_key"]:
         raise LlmNotConfigured(
-            "LLM_API_KEY is not set. Add it to .env to enable natural language query."
+            "LLM API Key 未配置。请在界面右上角「API 设置」中填写，或设置环境变量 LLM_API_KEY。"
         )
-    return OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL or None)
+    return OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"] or None)
 
 
 def _schema_prompt(policy: dict[str, Any], schema_tables: list[dict[str, Any]]) -> str:
@@ -108,7 +109,7 @@ def nl_to_guarded_sql(
     ]
 
     response = client.chat.completions.create(
-        model=LLM_MODEL,
+        model=get_llm_settings()["model"],
         messages=messages,
         tools=TOOLS,
         tool_choice="auto",

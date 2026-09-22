@@ -101,6 +101,15 @@ def init_meta_db() -> None:
             ON audit_logs(connection_id, created_at DESC)
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
 
 
 def _row_to_dict(row: sqlite3.Row, include_password: bool = False) -> dict[str, Any]:

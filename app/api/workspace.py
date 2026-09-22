@@ -1,11 +1,12 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app import meta_db, policy_store
+from app import audit, meta_db, policy_store
 from app.db.engines import create_db_engine
 from app.db.schema import get_engine_cfg, introspect_schema
 from app.models import AccessPolicyOut, AccessPolicyUpsert, TablePolicy
 from app.schema_interpret import interpret_schema, llm_status
+from app.settings_store import update_llm_settings
 
 router = APIRouter(tags=["workspace"])
 
@@ -14,6 +15,15 @@ class SettingsOut(BaseModel):
     llm_configured: bool
     llm_base_url: str | None = None
     llm_model: str | None = None
+    api_key_masked: str | None = None
+    source: str | None = None
+
+
+class SettingsUpdate(BaseModel):
+    api_key: str | None = None
+    base_url: str | None = None
+    model: str | None = None
+    clear_api_key: bool = False
 
 
 class SelectedTable(BaseModel):
@@ -53,6 +63,37 @@ def get_settings():
         llm_configured=status["configured"],
         llm_base_url=status["base_url"],
         llm_model=status["model"],
+        api_key_masked=status.get("api_key_masked"),
+        source=status.get("source"),
+    )
+
+
+@router.put("/api/settings", response_model=SettingsOut)
+def put_settings(body: SettingsUpdate):
+    cfg = update_llm_settings(
+        api_key=body.api_key,
+        base_url=body.base_url,
+        model=body.model,
+        clear_api_key=body.clear_api_key,
+    )
+    audit.write_audit(
+        action="settings.llm_update",
+        status="success",
+        summary="updated LLM settings",
+        detail={
+            "configured": cfg["configured"],
+            "base_url": cfg["base_url"],
+            "model": cfg["model"],
+            "source": cfg["source"],
+            "cleared": body.clear_api_key,
+        },
+    )
+    return SettingsOut(
+        llm_configured=cfg["configured"],
+        llm_base_url=cfg["base_url"],
+        llm_model=cfg["model"],
+        api_key_masked=cfg.get("api_key_masked"),
+        source=cfg.get("source"),
     )
 
 
