@@ -101,8 +101,8 @@ textarea {
 
 .modal .form input,
 .modal .form select,
-.modal .combo-field select,
-.modal .combo-field input {
+.modal .combo-field input,
+.modal .select-control {
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -122,21 +122,84 @@ textarea {
 
 .combo-row {
   display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
-  gap: 0.5rem;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 0.55rem;
   width: 100%;
   min-width: 0;
+  align-items: stretch;
 }
 
-.combo-field select,
 .combo-field input {
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 0.7rem 0.85rem;
+  padding: 0.72rem 0.9rem;
   background: #fff;
+  color: var(--ink);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.combo-field select {
+.combo-field input:hover {
+  border-color: #a9b7c5;
+}
+
+.combo-field input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(15, 106, 92, 0.14);
+}
+
+.select-shell {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+}
+
+.select-shell::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 0.85rem;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-right: 2px solid var(--primary);
+  border-bottom: 2px solid var(--primary);
+  transform: translateY(-65%) rotate(45deg);
+  pointer-events: none;
+}
+
+.select-control {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.72rem 2rem 0.72rem 0.9rem;
+  background:
+    linear-gradient(180deg, #ffffff 0%, #f7faf8 100%);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.select-control:hover {
+  border-color: #9ec9c0;
+  background: linear-gradient(180deg, #ffffff 0%, #eef7f4 100%);
+}
+
+.select-control:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(15, 106, 92, 0.14);
+}
+
+.select-control option {
+  font-weight: 500;
   color: var(--ink);
 }
 

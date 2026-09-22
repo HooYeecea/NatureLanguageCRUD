@@ -183,18 +183,21 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
             <div className="combo-field">
               <span className="combo-label">Base URL</span>
               <div className="combo-row">
-                <select
-                  value={baseUrlPreset}
-                  onChange={(e) => onBaseUrlPresetChange(e.target.value)}
-                  aria-label="选择常用 Base URL"
-                >
-                  {BASE_URL_PRESETS.map((p) => (
-                    <option key={p.value} value={p.value}>
-                      {p.label}
-                    </option>
-                  ))}
-                  <option value={CUSTOM}>自定义</option>
-                </select>
+                <div className="select-shell">
+                  <select
+                    className="select-control"
+                    value={baseUrlPreset}
+                    onChange={(e) => onBaseUrlPresetChange(e.target.value)}
+                    aria-label="选择常用 Base URL"
+                  >
+                    {BASE_URL_PRESETS.map((p) => (
+                      <option key={p.value} value={p.value}>
+                        {p.label}
+                      </option>
+                    ))}
+                    <option value={CUSTOM}>自定义</option>
+                  </select>
+                </div>
                 <input
                   value={baseUrl}
                   onChange={(e) => onBaseUrlInput(e.target.value)}
@@ -207,18 +210,21 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
             <div className="combo-field">
               <span className="combo-label">Model</span>
               <div className="combo-row">
-                <select
-                  value={modelPreset}
-                  onChange={(e) => onModelPresetChange(e.target.value)}
-                  aria-label="选择常用 Model"
-                >
-                  {MODEL_PRESETS.map((p) => (
-                    <option key={p.value} value={p.value}>
-                      {p.label}
-                    </option>
-                  ))}
-                  <option value={CUSTOM}>自定义</option>
-                </select>
+                <div className="select-shell">
+                  <select
+                    className="select-control"
+                    value={modelPreset}
+                    onChange={(e) => onModelPresetChange(e.target.value)}
+                    aria-label="选择常用 Model"
+                  >
+                    {MODEL_PRESETS.map((p) => (
+                      <option key={p.value} value={p.value}>
+                        {p.label}
+                      </option>
+                    ))}
+                    <option value={CUSTOM}>自定义</option>
+                  </select>
+                </div>
                 <input
                   value={model}
                   onChange={(e) => onModelInput(e.target.value)}
