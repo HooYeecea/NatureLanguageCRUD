@@ -16,56 +16,54 @@ Content-Type: application/json
   }
 }
 
-### Create MySQL connection (example)
-POST http://127.0.0.1:8000/api/connections
-Content-Type: application/json
-
-{
-  "name": "my-mysql",
-  "dialect": "mysql",
-  "host": "127.0.0.1",
-  "port": 3306,
-  "database": "mydb",
-  "username": "root",
-  "password": "secret"
-}
-
-### Create PostgreSQL connection (example)
-POST http://127.0.0.1:8000/api/connections
-Content-Type: application/json
-
-{
-  "name": "my-pg",
-  "dialect": "postgresql",
-  "host": "127.0.0.1",
-  "port": 5432,
-  "database": "mydb",
-  "username": "postgres",
-  "password": "secret"
-}
-
-### Create SQL Server connection (example)
-POST http://127.0.0.1:8000/api/connections
-Content-Type: application/json
-
-{
-  "name": "my-mssql",
-  "dialect": "sqlserver",
-  "host": "127.0.0.1",
-  "port": 1433,
-  "database": "mydb",
-  "username": "sa",
-  "password": "secret",
-  "options": {
-    "driver": "ODBC Driver 18 for SQL Server"
-  }
-}
-
-### Test connection (replace {id})
+### Test connection (replace {{id}})
 POST http://127.0.0.1:8000/api/connections/{{id}}/test
 
 ### Get full schema
 GET http://127.0.0.1:8000/api/connections/{{id}}/schema
 
-### Get single table schema
-GET http://127.0.0.1:8000/api/connections/{{id}}/schema/tasks
+### Get policy
+GET http://127.0.0.1:8000/api/connections/{{id}}/policy
+
+### Replace policy (whitelist tables/columns/ops)
+PUT http://127.0.0.1:8000/api/connections/{{id}}/policy
+Content-Type: application/json
+
+{
+  "require_where_for_update": true,
+  "require_where_for_delete": true,
+  "max_rows_per_mutation": 100,
+  "max_rows_per_query": 500,
+  "tables": [
+    {
+      "table": "tasks",
+      "allowed_columns": ["id", "title", "status", "priority", "assignee_id"],
+      "denied_columns": [],
+      "allow_select": true,
+      "allow_insert": true,
+      "allow_update": true,
+      "allow_delete": false
+    },
+    {
+      "table": "users",
+      "denied_columns": [],
+      "allow_select": true,
+      "allow_insert": false,
+      "allow_update": false,
+      "allow_delete": false
+    }
+  ]
+}
+
+### Allow all tables from live schema (loose config helper)
+POST http://127.0.0.1:8000/api/connections/{{id}}/policy/allow-all?allow_delete=false
+
+### Check whether an operation is allowed
+POST http://127.0.0.1:8000/api/connections/{{id}}/policy/check
+Content-Type: application/json
+
+{
+  "table": "tasks",
+  "operation": "delete",
+  "columns": ["id"]
+}

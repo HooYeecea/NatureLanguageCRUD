@@ -21,6 +21,7 @@ def _utcnow() -> str:
 def meta_conn() -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(META_DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     try:
         yield conn
         conn.commit()
@@ -47,6 +48,16 @@ def init_meta_db() -> None:
                 options_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS access_policies (
+                connection_id TEXT PRIMARY KEY,
+                policy_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE
             )
             """
         )
@@ -175,5 +186,6 @@ def update_connection(conn_id: str, payload: dict[str, Any]) -> Optional[dict[st
 
 def delete_connection(conn_id: str) -> bool:
     with meta_conn() as conn:
+        conn.execute("DELETE FROM access_policies WHERE connection_id = ?", (conn_id,))
         cur = conn.execute("DELETE FROM connections WHERE id = ?", (conn_id,))
         return cur.rowcount > 0

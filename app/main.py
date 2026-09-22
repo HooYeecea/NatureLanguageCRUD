@@ -3,7 +3,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app import meta_db
-from app.api import connections_router
+from app import policy_store
+from app.api import connections_router, policies_router
 from app.config import DEMO_DB_PATH
 from app.demo_seed import ensure_demo_db
 
@@ -12,14 +13,50 @@ def bootstrap() -> None:
     meta_db.init_meta_db()
     ensure_demo_db()
     existing = meta_db.list_connections()
-    if not any(c["name"] == "local-demo-sqlite" for c in existing):
-        meta_db.create_connection(
+    demo = next((c for c in existing if c["name"] == "local-demo-sqlite"), None)
+    if not demo:
+        demo = meta_db.create_connection(
             {
                 "name": "local-demo-sqlite",
                 "dialect": "sqlite",
                 "database": str(DEMO_DB_PATH),
                 "options": {"path": str(DEMO_DB_PATH)},
             }
+        )
+
+    # Seed a usable demo policy once (select/insert/update; delete off)
+    policy = policy_store.get_policy(demo["id"])
+    if not policy.get("tables"):
+        policy_store.upsert_policy(
+            demo["id"],
+            {
+                "require_where_for_update": True,
+                "require_where_for_delete": True,
+                "max_rows_per_mutation": 100,
+                "max_rows_per_query": 500,
+                "tables": [
+                    {
+                        "table": "users",
+                        "schema_name": None,
+                        "allowed_columns": None,
+                        "denied_columns": [],
+                        "allow_select": True,
+                        "allow_insert": True,
+                        "allow_update": True,
+                        "allow_delete": False,
+                    },
+                    {
+                        "table": "tasks",
+                        "schema_name": None,
+                        "allowed_columns": None,
+                        "denied_columns": [],
+                        "allow_select": True,
+                        "allow_insert": True,
+                        "allow_update": True,
+                        "allow_delete": False,
+                    },
+                ],
+            },
         )
 
 
@@ -43,3 +80,4 @@ def health():
 
 
 app.include_router(connections_router)
+app.include_router(policies_router)

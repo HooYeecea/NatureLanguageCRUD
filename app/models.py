@@ -88,3 +88,46 @@ class SchemaOverview(BaseModel):
     connection_id: str
     dialect: Dialect
     tables: list[TableInfo]
+
+
+Operation = Literal["select", "insert", "update", "delete"]
+
+
+class TablePolicy(BaseModel):
+    """Whitelist entry for one table. Only listed tables are accessible."""
+
+    table: str = Field(..., min_length=1)
+    schema_name: Optional[str] = None
+    # None / omit = all columns except denied_columns
+    allowed_columns: Optional[list[str]] = None
+    denied_columns: list[str] = Field(default_factory=list)
+    allow_select: bool = True
+    allow_insert: bool = True
+    allow_update: bool = True
+    allow_delete: bool = False
+
+
+class AccessPolicyUpsert(BaseModel):
+    require_where_for_update: bool = True
+    require_where_for_delete: bool = True
+    max_rows_per_mutation: int = Field(100, ge=1, le=100_000)
+    max_rows_per_query: int = Field(500, ge=1, le=100_000)
+    tables: list[TablePolicy] = Field(default_factory=list)
+
+
+class AccessPolicyOut(AccessPolicyUpsert):
+    connection_id: str
+    updated_at: datetime
+
+
+class PolicyCheckRequest(BaseModel):
+    table: str
+    operation: Operation
+    schema_name: Optional[str] = None
+    columns: Optional[list[str]] = None
+
+
+class PolicyCheckResult(BaseModel):
+    allowed: bool
+    reason: Optional[str] = None
+    effective_columns: Optional[list[str]] = None
