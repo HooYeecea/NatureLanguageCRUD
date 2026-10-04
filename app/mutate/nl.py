@@ -116,10 +116,12 @@ def nl_to_mutate_plan(
     policy: dict[str, Any],
     schema_tables: list[dict[str, Any]],
     analysis_context: Optional[str] = None,
+    sample_context: Optional[str] = None,
 ) -> tuple[Optional[MutatePlan], Optional[str], Optional[str]]:
     client = _client()
     schema_text = _schema_prompt(policy, schema_tables)
     analysis_block = f"\n{analysis_context}\n" if analysis_context else ""
+    sample_block = f"\n{sample_context}\n" if sample_context else ""
     messages = [
         {
             "role": "system",
@@ -129,9 +131,11 @@ def nl_to_mutate_plan(
                 "Only call propose_mutation for write requests. "
                 "Always include WHERE filters for update/delete. "
                 "Never invent table/column names. "
+                "Use sample rows to match real labels and codes. "
                 "If the request is read-only, do not call a tool; explain instead.\n"
                 f"Writable schema:\n{schema_text}"
                 f"{analysis_block}"
+                f"{sample_block}"
             ),
         },
         {"role": "user", "content": prompt},

@@ -85,6 +85,9 @@ def nl_to_guarded_sql(
     policy: dict[str, Any],
     schema_tables: list[dict[str, Any]],
     analysis_context: Optional[str] = None,
+    sample_context: Optional[str] = None,
+    previous_sql: Optional[str] = None,
+    rewrite_hint: Optional[str] = None,
 ) -> tuple[Any, Optional[str], Optional[str]]:
     """
     Returns (GuardedQuery|None, explanation, assistant_text_if_no_tool).
@@ -93,6 +96,15 @@ def nl_to_guarded_sql(
     schema_text = _schema_prompt(policy, schema_tables)
     max_rows = policy.get("max_rows_per_query") or 500
     analysis_block = f"\n{analysis_context}\n" if analysis_context else ""
+    sample_block = f"\n{sample_context}\n" if sample_context else ""
+    retry_block = ""
+    if previous_sql and rewrite_hint:
+        retry_block = (
+            "\nThe previous SQL did not answer the question.\n"
+            f"Previous SQL:\n{previous_sql}\n"
+            f"Why it failed / how to rewrite: {rewrite_hint}\n"
+            "Produce a better filtered SELECT. Do not repeat the same unfiltered query.\n"
+        )
 
     messages = [
         {
@@ -109,10 +121,13 @@ def nl_to_guarded_sql(
                 "2) Prefer exact match (=) for ids; for Chinese labels use = first, or LIKE only if needed.\n"
                 "3) If permissions/details live in related tables, use JOIN based on analysis hints / foreign keys.\n"
                 "4) Select only needed columns; never invent column names (watch typos).\n"
-                "5) If unclear, still produce the best filtered SELECT rather than dumping all rows.\n"
+                "5) Use sample rows to learn real codes/labels (e.g. role names, status values).\n"
+                "6) If unclear, still produce the best filtered SELECT rather than dumping all rows.\n"
                 "If the request is not a read query, explain that writes are not available on this endpoint.\n"
                 f"Allowed schema:\n{schema_text}"
                 f"{analysis_block}"
+                f"{sample_block}"
+                f"{retry_block}"
             ),
         },
         {"role": "user", "content": prompt},

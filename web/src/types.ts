@@ -67,6 +67,10 @@ export type QueryResult = {
   row_count: number
   explanation?: string | null
   reply?: string | null
+  retried?: boolean
+  original_sql?: string | null
+  validation_ok?: boolean | null
+  validation_note?: string | null
 }
 
 export type MutatePreview = {

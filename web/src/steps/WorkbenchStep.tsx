@@ -15,9 +15,13 @@ type ChatItem = {
   kind?: 'text' | 'sql' | 'result' | 'error'
   text: string
   sql?: string
+  editableSql?: boolean
   rows?: Record<string, unknown>[]
   rowCount?: number
   preview?: MutatePreview
+  validationOk?: boolean | null
+  validationNote?: string | null
+  originalSql?: string | null
 }
 
 export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Props) {
@@ -29,7 +33,7 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
     {
       role: 'assistant',
       kind: 'text',
-      text: `已就绪。当前范围：${interpret.selected_tables.join(', ')}。可以用自然语言查询或提出写入（写入需确认）。`,
+      text: `已就绪。当前范围：${interpret.selected_tables.join(', ')}。可以用自然语言查询或提出写入（写入需确认）。生成的 SQL 可直接编辑后再执行。`,
     },
   ])
   const [pending, setPending] = useState<MutatePreview | null>(null)
@@ -39,6 +43,45 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
     const el = chatRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [items, busy])
+
+  function appendQueryResult(result: QueryResult, sqlLabel: string) {
+    const next: ChatItem[] = []
+    if (result.sql) {
+      next.push({
+        role: 'assistant',
+        kind: 'sql',
+        text: sqlLabel,
+        sql: result.sql,
+        editableSql: true,
+        originalSql: result.original_sql,
+        validationOk: result.validation_ok,
+        validationNote: result.validation_note,
+      })
+    }
+    if (result.rows && result.rows.length > 0) {
+      next.push({
+        role: 'assistant',
+        kind: 'result',
+        text: `查询结果（${result.row_count} 行）`,
+        rows: result.rows,
+        rowCount: result.row_count,
+      })
+    } else if (result.sql) {
+      next.push({
+        role: 'assistant',
+        kind: 'result',
+        text: result.reply || result.explanation || '查询完成，没有返回数据。',
+        rowCount: result.row_count ?? 0,
+      })
+    } else {
+      next.push({
+        role: 'assistant',
+        kind: 'text',
+        text: result.reply || result.explanation || '未生成可执行查询。',
+      })
+    }
+    return next
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -51,41 +94,8 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
     try {
       if (mode === 'query') {
         const result: QueryResult = await api.nlQuery(connection.id, userText)
-        const next: ChatItem[] = []
-
-        if (result.sql) {
-          next.push({
-            role: 'assistant',
-            kind: 'sql',
-            text: '已转换为 SQL',
-            sql: result.sql,
-          })
-        }
-
-        if (result.rows && result.rows.length > 0) {
-          next.push({
-            role: 'assistant',
-            kind: 'result',
-            text: `查询结果（${result.row_count} 行）`,
-            rows: result.rows,
-            rowCount: result.row_count,
-          })
-        } else if (result.sql) {
-          next.push({
-            role: 'assistant',
-            kind: 'result',
-            text: result.reply || result.explanation || '查询完成，没有返回数据。',
-            rowCount: result.row_count ?? 0,
-          })
-        } else {
-          next.push({
-            role: 'assistant',
-            kind: 'text',
-            text: result.reply || result.explanation || '未生成可执行查询。',
-          })
-        }
-
-        setItems((prev) => [...prev, ...next])
+        const label = result.retried ? '已校验并改写 SQL' : '已转换为 SQL'
+        setItems((prev) => [...prev, ...appendQueryResult(result, label)])
       } else {
         const preview = await api.nlMutate(connection.id, userText)
         setPending(preview.blocked ? null : preview)
@@ -115,6 +125,27 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
         ...prev,
         { role: 'assistant', kind: 'error', text: msg },
       ])
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function runEditedSql(sql: string) {
+    const trimmed = sql.trim()
+    if (!trimmed) return
+    setBusy(true)
+    setError(null)
+    setItems((prev) => [
+      ...prev,
+      { role: 'user', kind: 'text', text: '执行编辑后的 SQL' },
+    ])
+    try {
+      const result = await api.runSql(connection.id, trimmed)
+      setItems((prev) => [...prev, ...appendQueryResult(result, '已执行编辑后的 SQL')])
+    } catch (err) {
+      const msg = friendlyError(err)
+      setError(msg)
+      setItems((prev) => [...prev, { role: 'assistant', kind: 'error', text: msg }])
     } finally {
       setBusy(false)
     }
@@ -173,10 +204,23 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
         {items.map((item, idx) => (
           <article key={idx} className={`bubble ${item.role} ${item.kind || ''}`}>
             <p>{item.text}</p>
-            {item.sql && (
-              <pre className="sql">
-                <code>{item.sql}</code>
-              </pre>
+            {item.sql && item.editableSql ? (
+              <EditableSql sql={item.sql} disabled={busy} onRun={runEditedSql} />
+            ) : (
+              item.sql && (
+                <pre className="sql">
+                  <code>{item.sql}</code>
+                </pre>
+              )
+            )}
+            {item.originalSql && item.originalSql !== item.sql && (
+              <p className="muted sql-original">初次 SQL：{item.originalSql}</p>
+            )}
+            {item.validationNote && (
+              <p className={`validation-note ${item.validationOk === false ? 'warn' : ''}`}>
+                {item.validationOk === false ? '校验提醒：' : '校验：'}
+                {item.validationNote}
+              </p>
             )}
             {item.rows && item.rows.length > 0 && (
               <div className="table-wrap">
@@ -262,6 +306,71 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
         </button>
       </div>
     </section>
+  )
+}
+
+function EditableSql({
+  sql,
+  disabled,
+  onRun,
+}: {
+  sql: string
+  disabled: boolean
+  onRun: (sql: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(sql)
+
+  useEffect(() => {
+    setDraft(sql)
+    setEditing(false)
+  }, [sql])
+
+  return (
+    <div className="sql-block">
+      {editing ? (
+        <textarea
+          className="sql-editor"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={6}
+          spellCheck={false}
+        />
+      ) : (
+        <pre className="sql">
+          <code>{sql}</code>
+        </pre>
+      )}
+      <div className="sql-toolbar">
+        {editing ? (
+          <>
+            <button
+              type="button"
+              className="btn ghost"
+              disabled={disabled}
+              onClick={() => {
+                setDraft(sql)
+                setEditing(false)
+              }}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="btn primary"
+              disabled={disabled || !draft.trim()}
+              onClick={() => onRun(draft)}
+            >
+              执行 SQL
+            </button>
+          </>
+        ) : (
+          <button type="button" className="btn ghost" disabled={disabled} onClick={() => setEditing(true)}>
+            编辑并执行
+          </button>
+        )}
+      </div>
+    </div>
   )
 }
 

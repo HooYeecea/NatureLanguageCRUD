@@ -65,6 +65,7 @@ def interpret_schema(
     dialect: str,
     tables: list[dict[str, Any]],
     use_llm: bool = True,
+    samples: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     fallback = _fallback_from_metadata(tables)
     if not use_llm:
@@ -94,6 +95,7 @@ def interpret_schema(
                 ],
                 "primary_key": t.get("primary_key") or [],
                 "foreign_keys": t.get("foreign_keys") or [],
+                "sample_rows": (samples or {}).get(t.get("name") or "", []),
             }
         )
 
@@ -108,7 +110,7 @@ def interpret_schema(
                     f"Dialect: {dialect}. "
                     "Given real table metadata (columns, PK, FK), explain in Chinese: "
                     "1) each table's purpose, 2) how tables relate, 3) suggested join paths, "
-                    "4) caveats for CRUD. "
+                    "4) caveats for CRUD. Use sample_rows to infer enums, status codes, and labels. "
                     "Return JSON only with keys: "
                     "overview (string), "
                     "tables (array of {name, purpose, key_fields}), "

@@ -109,6 +109,12 @@ export const api = {
       body: JSON.stringify({ prompt, dry_run }),
     }),
 
+  runSql: (id: string, sql: string, dry_run = false) =>
+    request<QueryResult>(`/api/connections/${id}/query/sql`, {
+      method: 'POST',
+      body: JSON.stringify({ sql, dry_run }),
+    }),
+
   structuredQuery: (
     id: string,
     body: { table: string; columns?: string[]; limit?: number },

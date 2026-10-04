@@ -177,6 +177,10 @@ class QueryResult(BaseModel):
     row_count: int = 0
     explanation: Optional[str] = None
     reply: Optional[str] = None
+    retried: bool = False
+    original_sql: Optional[str] = None
+    validation_ok: Optional[bool] = None
+    validation_note: Optional[str] = None
 
 
 MutationOp = Literal["insert", "update", "delete"]

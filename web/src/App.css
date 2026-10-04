@@ -668,6 +668,49 @@ code {
   overflow: auto;
 }
 
+.sql-block {
+  margin-top: 0.55rem;
+}
+
+.sql-editor {
+  display: block;
+  width: 100%;
+  margin-top: 0.55rem;
+  padding: 0.75rem;
+  background: #17202a;
+  color: #e7eef7;
+  border-radius: 12px;
+  border: 1px solid #314155;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 110px;
+}
+
+.sql-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  margin-top: 0.5rem;
+}
+
+.sql-original {
+  margin: 0.45rem 0 0;
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.validation-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.88rem;
+  color: #46615a;
+}
+
+.validation-note.warn {
+  color: #9a5b16;
+}
+
 .table-wrap {
   overflow: auto;
   margin-top: 0.7rem;

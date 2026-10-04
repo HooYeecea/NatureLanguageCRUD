@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from app import audit, meta_db, policy_store
 from app.analysis_store import analysis_context_text, get_analysis
 from app.db.engines import create_db_engine
+from app.db.samples import fetch_table_samples, format_samples_text
 from app.db.schema import get_engine_cfg, introspect_schema
 from app.models import (
     MutateConfirmRequest,
@@ -143,6 +144,8 @@ def mutate_nl(connection_id: str, body: NlMutateRequest):
     try:
         overview = introspect_schema(engine, connection_id, connection["dialect"])
         schema_tables = [t.model_dump() for t in overview.tables]
+        samples = fetch_table_samples(engine, connection["dialect"], schema_tables, policy)
+        sample_ctx = format_samples_text(samples)
     except Exception as exc:  # noqa: BLE001
         audit.write_audit(
             action="mutate.nl",
@@ -170,6 +173,7 @@ def mutate_nl(connection_id: str, body: NlMutateRequest):
                     ],
                 )
             ),
+            sample_context=sample_ctx,
         )
     except LlmNotConfigured as exc:
         audit.write_audit(

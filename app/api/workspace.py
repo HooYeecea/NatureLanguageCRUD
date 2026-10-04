@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from app import audit, meta_db, policy_store
 from app.analysis_store import get_analysis, save_analysis
 from app.db.engines import create_db_engine
+from app.db.samples import fetch_table_samples
 from app.db.schema import get_engine_cfg, introspect_schema
 from app.models import AccessPolicyOut, AccessPolicyUpsert, TablePolicy
 from app.schema_interpret import interpret_schema, llm_status
@@ -164,39 +165,43 @@ def interpret_selected_tables(connection_id: str, body: InterpretRequest):
             )
 
     engine = create_db_engine(get_engine_cfg(data))
+    samples: dict = {}
     try:
         overview = introspect_schema(engine, connection_id, data["dialect"])
+        selected = []
+        for t in overview.tables:
+            match = False
+            for req in body.tables:
+                if req.table != t.name:
+                    continue
+                if req.schema_name is None or t.schema_name is None or req.schema_name == t.schema_name:
+                    match = True
+                    break
+            if match:
+                selected.append(t.model_dump())
+        if not selected:
+            raise HTTPException(status_code=400, detail="None of the selected tables were found in schema")
+        samples = fetch_table_samples(engine, data["dialect"], selected)
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Schema introspection failed: {exc}") from exc
     finally:
         engine.dispose()
-
-    selected = []
-    for t in overview.tables:
-        match = False
-        for req in body.tables:
-            if req.table != t.name:
-                continue
-            if req.schema_name is None or t.schema_name is None or req.schema_name == t.schema_name:
-                match = True
-                break
-        if match:
-            selected.append(t.model_dump())
-
-    if not selected:
-        raise HTTPException(status_code=400, detail="None of the selected tables were found in schema")
 
     try:
         result = interpret_schema(
             dialect=data["dialect"],
             tables=selected,
             use_llm=body.use_llm,
+            samples=samples,
         )
     except Exception as exc:  # noqa: BLE001
         result = interpret_schema(
             dialect=data["dialect"],
             tables=selected,
             use_llm=False,
+            samples=samples,
         )
         warnings = list(result.get("warnings") or [])
         warnings.append(f"LLM interpret failed, used metadata fallback: {exc}")
