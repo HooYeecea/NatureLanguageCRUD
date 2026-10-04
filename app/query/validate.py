@@ -42,6 +42,9 @@ def critique_query_result(
                         "if the filter is correct). "
                         "ok=false if the SQL dumped an unfiltered table, joined wrong, "
                         "ignored a named entity, or selected the wrong columns. "
+                        "If the question names a specific entity (e.g. 超级管理员) and SQL has no WHERE, "
+                        "ok MUST be false even when that entity appears among other rows. "
+                        "If the question asks for 权限, listing role names without permission columns is not ok. "
                         "rewrite_hint is a short instruction for a better SELECT. "
                         "Write reason/rewrite_hint in Chinese."
                     ),
@@ -71,6 +74,7 @@ def critique_query_result(
         if heuristic and ok is True and "没有 WHERE" in heuristic:
             ok = False
             reason = heuristic
+            hint = hint or heuristic
         return {"ok": ok, "reason": reason, "rewrite_hint": hint}
     except Exception:  # noqa: BLE001
         if heuristic:
