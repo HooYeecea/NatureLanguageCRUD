@@ -12,6 +12,8 @@ Natural-language workbench for relational databases. Connect your DB, pick table
 - **Guided UI flow**: Connect → Select tables → Interpret relationships → Workbench
 - **Access policy**: table/column whitelist, operation flags, row limits, required WHERE for update/delete
 - **Controlled query**: NL → SELECT only, validated by sqlglot, forced `LIMIT`
+- **Sample-aware SQL**: a few redacted sample rows (not persisted) help the model learn real labels and codes
+- **Answer check**: if a query looks like an unfiltered dump of a named entity, rewrite once; you can still edit SQL and re-run through the guard
 - **Restricted write**: structured insert/update/delete → preview → confirm
 - **Schema analysis cache**: reuse relationship interpretation; optional re-analyze with LLM
 - **LLM settings UI**: API Key / Base URL / Model (presets + custom), encrypted key storage
@@ -92,7 +94,7 @@ UI-configured keys override `.env` and are encrypted in `workbench.db`.
 2. Multi-select tables you want to operate on
 3. Review schema/relationship analysis (cached for reuse; click re-analyze to refresh)
 4. In the workbench:
-   - **Query**: natural language → SQL preview → result table
+   - **Query**: natural language → SQL → result table. Generated SELECT can be edited and executed again (still SELECT-only).
    - **Write**: natural language → mutation preview → confirm execute
 
 ## Safety model
@@ -100,6 +102,7 @@ UI-configured keys override `.env` and are encrypted in `workbench.db`.
 | Layer | Behavior |
 |-------|----------|
 | Read | SELECT only; whitelist tables/columns; enforce max rows |
+| Samples | Tiny `LIMIT` reads of introspected identifiers only; statement timeout; secrets redacted; not stored in analysis cache |
 | Write | No free-form DML; structured mutate only; WHERE required by policy; preview + confirm |
 | Secrets | DB passwords and LLM API keys encrypted at rest in meta DB |
 
