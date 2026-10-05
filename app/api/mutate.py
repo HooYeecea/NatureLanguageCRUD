@@ -26,6 +26,9 @@ from app.mutate import (
     preview_plan,
 )
 from app.query import LlmNotConfigured, SqlGuardError
+from app.glossary import glossary_context_text
+from app.glossary_store import get_glossary
+from app.query.guard_explain import http_guard_error
 
 router = APIRouter(prefix="/api/connections", tags=["mutate"])
 
@@ -131,7 +134,7 @@ def mutate_preview(connection_id: str, body: MutateRequest):
             summary=exc.message,
             detail={"operation": body.operation, "table": body.table},
         )
-        raise HTTPException(status_code=400, detail=exc.message) from exc
+        raise http_guard_error(exc) from exc
     return _preview_from_plan(connection_id, connection, policy, plan)
 
 
@@ -174,6 +177,8 @@ def mutate_nl(connection_id: str, body: NlMutateRequest):
                 )
             ),
             sample_context=sample_ctx,
+            glossary_context=glossary_context_text(get_glossary(connection_id)),
+            history=[t.model_dump() for t in (body.history or [])],
         )
     except LlmNotConfigured as exc:
         audit.write_audit(
@@ -192,7 +197,7 @@ def mutate_nl(connection_id: str, body: NlMutateRequest):
             summary=exc.message,
             detail={"prompt": body.prompt},
         )
-        raise HTTPException(status_code=400, detail=exc.message) from exc
+        raise http_guard_error(exc) from exc
     except Exception as exc:  # noqa: BLE001
         audit.write_audit(
             action="mutate.nl",
@@ -213,7 +218,10 @@ def mutate_nl(connection_id: str, body: NlMutateRequest):
         )
         raise HTTPException(
             status_code=400,
-            detail=reply or "No mutation proposed for this prompt",
+            detail={
+                "message": reply or "未能理解为写入操作。",
+                "hint": "请说得更明确，例如「向角色表新增一条名叫…」。",
+            },
         )
 
     return _preview_from_plan(
@@ -269,7 +277,7 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
             summary=exc.message,
             detail={"preview_id": body.preview_id},
         )
-        raise HTTPException(status_code=400, detail=exc.message) from exc
+        raise http_guard_error(exc) from exc
 
     max_rows = int(policy.get("max_rows_per_mutation") or 100)
     engine = create_db_engine(get_engine_cfg(connection))

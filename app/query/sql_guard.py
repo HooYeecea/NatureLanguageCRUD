@@ -20,8 +20,9 @@ DIALECT_MAP = {
 
 
 class SqlGuardError(Exception):
-    def __init__(self, message: str):
+    def __init__(self, message: str, sql: str | None = None):
         self.message = message
+        self.sql = sql
         super().__init__(message)
 
 

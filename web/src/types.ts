@@ -57,6 +57,25 @@ export type InterpretResult = {
   updated_at?: string | null
 }
 
+export type ChatTurn = {
+  role: 'user' | 'assistant'
+  content?: string
+  sql?: string | null
+}
+
+export type GlossaryColumn = {
+  name: string
+  alias: string
+  synonyms: string[]
+}
+
+export type GlossaryTable = {
+  table: string
+  schema_name?: string | null
+  alias: string
+  synonyms: string[]
+  columns: GlossaryColumn[]
+}
 export type QueryResult = {
   sql: string
   tables: string[]

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { friendlyError } from '../errors'
-import type { Connection, InterpretResult } from '../types'
+import type { Connection, GlossaryTable, InterpretResult } from '../types'
 
 type Selected = { table: string; schema_name?: string | null }
 
@@ -19,6 +19,7 @@ export function InterpretStep({
   onNext,
 }: Props) {
   const [result, setResult] = useState<InterpretResult | null>(null)
+  const [glossary, setGlossary] = useState<GlossaryTable[]>([])
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [llmConfigured, setLlmConfigured] = useState(false)
@@ -46,6 +47,8 @@ export function InterpretStep({
               ? '已加载缓存的分析结果（可重新分析）'
               : '分析完成并已保存，可复用',
           )
+          const g = await api.getGlossary(connection.id)
+          if (!cancelled) setGlossary(g.tables || [])
         }
       } catch (e) {
         if (!cancelled) setError(friendlyError(e))
@@ -59,6 +62,36 @@ export function InterpretStep({
     }
   }, [connection.id, selectedTables])
 
+  async function enterWorkbench() {
+    if (!result) return
+    setBusy(true)
+    setError(null)
+    try {
+      await api.saveGlossary(connection.id, glossary)
+      onNext(result)
+    } catch (e) {
+      setError(friendlyError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function updateAlias(table: string, alias: string) {
+    setGlossary((prev) =>
+      prev.map((item) => (item.table === table ? { ...item, alias } : item)),
+    )
+  }
+
+  function updateSynonyms(table: string, raw: string) {
+    const synonyms = raw
+      .split(/[,，、]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    setGlossary((prev) =>
+      prev.map((item) => (item.table === table ? { ...item, synonyms } : item)),
+    )
+  }
+
   async function reanalyze() {
     setBusy(true)
     setError(null)
@@ -70,6 +103,8 @@ export function InterpretStep({
       })
       setResult(interpreted)
       setStatusText('已重新分析并更新缓存')
+      const g = await api.getGlossary(connection.id)
+      setGlossary(g.tables || [])
     } catch (e) {
       setError(friendlyError(e))
     } finally {
@@ -162,6 +197,42 @@ export function InterpretStep({
               </ul>
             </>
           )}
+          {glossary.length > 0 && (
+            <>
+              <h3>业务词典</h3>
+              <p className="muted small">
+                给表起中文名或同义词，查询时会用来对应真实表名。进入工作台时自动保存。
+              </p>
+              <ul className="glossary-list">
+                {glossary.map((item) => (
+                  <li key={`${item.schema_name || ''}::${item.table}`}>
+                    <div className="glossary-row">
+                      <strong>{item.table}</strong>
+                      <input
+                        value={item.alias || ''}
+                        onChange={(e) => updateAlias(item.table, e.target.value)}
+                        placeholder="中文别名，如 角色"
+                      />
+                      <input
+                        value={(item.synonyms || []).join('，')}
+                        onChange={(e) => updateSynonyms(item.table, e.target.value)}
+                        placeholder="同义词，逗号分隔"
+                      />
+                    </div>
+                    {item.columns?.some((c) => c.alias) && (
+                      <div className="muted small">
+                        字段：
+                        {item.columns
+                          .filter((c) => c.alias)
+                          .map((c) => `${c.name}=${c.alias}`)
+                          .join('，')}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </div>
       )}
 
@@ -182,7 +253,7 @@ export function InterpretStep({
             type="button"
             className="btn primary"
             disabled={!result || busy}
-            onClick={() => result && onNext(result)}
+            onClick={enterWorkbench}
           >
             进入工作台
           </button>

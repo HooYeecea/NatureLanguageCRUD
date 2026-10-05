@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api } from '../api'
 import { friendlyError } from '../errors'
-import type { Connection, InterpretResult, MutatePreview, QueryResult } from '../types'
+import type { ChatTurn, Connection, InterpretResult, MutatePreview, QueryResult } from '../types'
 
 type Props = {
   connection: Connection
@@ -33,7 +33,7 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
     {
       role: 'assistant',
       kind: 'text',
-      text: `已就绪。当前范围：${interpret.selected_tables.join(', ')}。可以用自然语言查询或提出写入（写入需确认）。生成的 SQL 可直接编辑后再执行。`,
+      text: `已就绪。当前范围：${interpret.selected_tables.join(', ')}。可以用自然语言查询或提出写入（写入需确认）。支持追问，例如「再按权限过滤」；生成的 SQL 可编辑后再执行。`,
     },
   ])
   const [pending, setPending] = useState<MutatePreview | null>(null)
@@ -83,21 +83,34 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
     return next
   }
 
+  function buildHistory(): ChatTurn[] {
+    const turns: ChatTurn[] = []
+    for (const item of items) {
+      if (item.role === 'user' && item.kind === 'text' && item.text && item.text !== '执行编辑后的 SQL') {
+        turns.push({ role: 'user', content: item.text })
+      } else if (item.sql) {
+        turns.push({ role: 'assistant', content: item.text || '', sql: item.sql })
+      }
+    }
+    return turns.slice(-8)
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     if (!prompt.trim()) return
     const userText = prompt.trim()
+    const history = buildHistory()
     setPrompt('')
     setItems((prev) => [...prev, { role: 'user', kind: 'text', text: userText }])
     setBusy(true)
     setError(null)
     try {
       if (mode === 'query') {
-        const result: QueryResult = await api.nlQuery(connection.id, userText)
+        const result: QueryResult = await api.nlQuery(connection.id, userText, { history })
         const label = result.retried ? '已校验并改写 SQL' : '已转换为 SQL'
         setItems((prev) => [...prev, ...appendQueryResult(result, label)])
       } else {
-        const preview = await api.nlMutate(connection.id, userText)
+        const preview = await api.nlMutate(connection.id, userText, history)
         setPending(preview.blocked ? null : preview)
         const next: ChatItem[] = []
         if (preview.sql) {
@@ -285,7 +298,7 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
           onChange={(e) => setPrompt(e.target.value)}
           placeholder={
             mode === 'query'
-              ? '例如：查出所有 TODO 状态的任务'
+              ? '例如：查出所有 TODO 状态的任务。也可以追问：只看第一条 / 再按权限过滤'
               : '例如：给负责人 1 新建一个高优先级任务叫修复超时'
           }
           rows={3}

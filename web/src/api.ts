@@ -1,6 +1,8 @@
 import type {
+  ChatTurn,
   Connection,
   Dialect,
+  GlossaryTable,
   InterpretResult,
   MutatePreview,
   QueryResult,
@@ -103,10 +105,28 @@ export const api = {
   getAnalysis: (id: string) =>
     request<InterpretResult>(`/api/connections/${id}/workspace/analysis`),
 
-  nlQuery: (id: string, prompt: string, dry_run = false) =>
+  getGlossary: (id: string) =>
+    request<{ connection_id: string; tables: GlossaryTable[] }>(
+      `/api/connections/${id}/workspace/glossary`,
+    ),
+
+  saveGlossary: (id: string, tables: GlossaryTable[]) =>
+    request<{ connection_id: string; tables: GlossaryTable[] }>(
+      `/api/connections/${id}/workspace/glossary`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ tables }),
+      },
+    ),
+
+  nlQuery: (id: string, prompt: string, options: { dry_run?: boolean; history?: ChatTurn[] } = {}) =>
     request<QueryResult>(`/api/connections/${id}/query/nl`, {
       method: 'POST',
-      body: JSON.stringify({ prompt, dry_run }),
+      body: JSON.stringify({
+        prompt,
+        dry_run: options.dry_run ?? false,
+        history: options.history ?? [],
+      }),
     }),
 
   runSql: (id: string, sql: string, dry_run = false) =>
@@ -124,10 +144,10 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  nlMutate: (id: string, prompt: string) =>
+  nlMutate: (id: string, prompt: string, history: ChatTurn[] = []) =>
     request<MutatePreview>(`/api/connections/${id}/mutate/nl`, {
       method: 'POST',
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt, history }),
     }),
 
   confirmMutate: (id: string, preview_id: string) =>

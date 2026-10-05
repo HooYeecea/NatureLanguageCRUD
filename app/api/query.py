@@ -3,14 +3,16 @@ from fastapi import APIRouter, HTTPException
 from app import audit, meta_db, policy_store
 from app.analysis_store import analysis_context_text, get_analysis
 from app.db.engines import create_db_engine
+from app.db.samples import fetch_table_samples, format_samples_text
 from app.db.schema import get_engine_cfg, introspect_schema
+from app.glossary import glossary_context_text
+from app.glossary_store import get_glossary
 from app.models import (
     NlQueryRequest,
     QueryResult,
     RawSqlQueryRequest,
     StructuredQueryRequest,
 )
-from app.db.samples import fetch_table_samples, format_samples_text
 from app.query import (
     LlmNotConfigured,
     SqlGuardError,
@@ -20,6 +22,7 @@ from app.query import (
     guard_select_sql,
     nl_to_guarded_sql,
 )
+from app.query.guard_explain import format_guard_hint, http_guard_error
 
 router = APIRouter(prefix="/api/connections", tags=["query"])
 
@@ -142,7 +145,7 @@ def query_structured(connection_id: str, body: StructuredQueryRequest):
             summary=exc.message,
             detail={"table": body.table},
         )
-        raise HTTPException(status_code=400, detail=exc.message) from exc
+        raise http_guard_error(exc) from exc
     return _run_guarded(
         connection_id,
         connection,
@@ -166,7 +169,7 @@ def query_raw_sql(connection_id: str, body: RawSqlQueryRequest):
             summary=exc.message,
             detail={"sql": body.sql},
         )
-        raise HTTPException(status_code=400, detail=exc.message) from exc
+        raise http_guard_error(exc) from exc
     return _run_guarded(
         connection_id,
         connection,
@@ -210,16 +213,20 @@ def query_natural_language(connection_id: str, body: NlQueryRequest):
         ],
     )
     analysis_ctx = analysis_context_text(analysis)
+    glossary_ctx = glossary_context_text(get_glossary(connection_id))
+    history = [t.model_dump() for t in (body.history or [])]
+    gen_kwargs = {
+        "dialect": connection["dialect"],
+        "policy": policy,
+        "schema_tables": schema_tables,
+        "analysis_context": analysis_ctx,
+        "sample_context": sample_ctx,
+        "glossary_context": glossary_ctx,
+        "history": history,
+    }
 
     try:
-        guarded, explanation, reply = nl_to_guarded_sql(
-            body.prompt,
-            dialect=connection["dialect"],
-            policy=policy,
-            schema_tables=schema_tables,
-            analysis_context=analysis_ctx,
-            sample_context=sample_ctx,
-        )
+        guarded, explanation, reply = nl_to_guarded_sql(body.prompt, **gen_kwargs)
     except LlmNotConfigured as exc:
         audit.write_audit(
             action="query.nl",
@@ -230,14 +237,33 @@ def query_natural_language(connection_id: str, body: NlQueryRequest):
         )
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except SqlGuardError as exc:
-        audit.write_audit(
-            action="query.nl",
-            status="error",
-            connection_id=connection_id,
-            summary=exc.message,
-            detail={"prompt": body.prompt},
-        )
-        raise HTTPException(status_code=400, detail=exc.message) from exc
+        try:
+            guarded, explanation, reply = nl_to_guarded_sql(
+                body.prompt,
+                **gen_kwargs,
+                previous_sql=exc.sql,
+                rewrite_hint=format_guard_hint(exc),
+            )
+        except LlmNotConfigured as llm_exc:
+            raise HTTPException(status_code=503, detail=str(llm_exc)) from llm_exc
+        except SqlGuardError as exc2:
+            audit.write_audit(
+                action="query.nl",
+                status="error",
+                connection_id=connection_id,
+                summary=exc2.message,
+                detail={"prompt": body.prompt, "sql": exc2.sql or exc.sql},
+            )
+            raise http_guard_error(exc2) from exc2
+        except Exception as retry_exc:  # noqa: BLE001
+            audit.write_audit(
+                action="query.nl",
+                status="error",
+                connection_id=connection_id,
+                summary=exc.message,
+                detail={"prompt": body.prompt, "retry_error": str(retry_exc)},
+            )
+            raise http_guard_error(exc) from retry_exc
     except Exception as exc:  # noqa: BLE001
         audit.write_audit(
             action="query.nl",

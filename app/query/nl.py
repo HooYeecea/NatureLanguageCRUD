@@ -50,6 +50,26 @@ def _schema_prompt(policy: dict[str, Any], schema_tables: list[dict[str, Any]]) 
     return "\n".join(lines) if lines else "(no selectable tables)"
 
 
+def _history_block(history: Optional[list[dict[str, Any]]]) -> str:
+    if not history:
+        return ""
+    lines = [
+        "\n## Recent conversation (follow-ups like 再过滤/只看第一条 refer to this)",
+        "Reuse tables, joins, and filters from the last SQL unless the user changes topic.",
+    ]
+    for turn in history[-8:]:
+        role = (turn.get("role") or "").lower()
+        content = (turn.get("content") or "").strip()
+        sql = (turn.get("sql") or "").strip()
+        if role == "user" and content:
+            lines.append(f"- User: {content}")
+        elif sql:
+            lines.append(f"- Last SQL: {sql}")
+        elif content:
+            lines.append(f"- Assistant: {content}")
+    return "\n".join(lines) + "\n"
+
+
 TOOLS = [
     {
         "type": "function",
@@ -86,6 +106,8 @@ def nl_to_guarded_sql(
     schema_tables: list[dict[str, Any]],
     analysis_context: Optional[str] = None,
     sample_context: Optional[str] = None,
+    glossary_context: Optional[str] = None,
+    history: Optional[list[dict[str, Any]]] = None,
     previous_sql: Optional[str] = None,
     rewrite_hint: Optional[str] = None,
 ) -> tuple[Any, Optional[str], Optional[str]]:
@@ -97,10 +119,12 @@ def nl_to_guarded_sql(
     max_rows = policy.get("max_rows_per_query") or 500
     analysis_block = f"\n{analysis_context}\n" if analysis_context else ""
     sample_block = f"\n{sample_context}\n" if sample_context else ""
+    glossary_block = f"\n{glossary_context}\n" if glossary_context else ""
+    history_block = _history_block(history)
     retry_block = ""
     if previous_sql and rewrite_hint:
         retry_block = (
-            "\nThe previous SQL did not answer the question.\n"
+            "\nThe previous SQL was rejected or inaccurate.\n"
             f"Previous SQL:\n{previous_sql}\n"
             f"Why it failed / how to rewrite: {rewrite_hint}\n"
             "Produce a better filtered SELECT. Do not repeat the same unfiltered query.\n"
@@ -129,6 +153,8 @@ def nl_to_guarded_sql(
                 f"Allowed schema:\n{schema_text}"
                 f"{analysis_block}"
                 f"{sample_block}"
+                f"{glossary_block}"
+                f"{history_block}"
                 f"{retry_block}"
             ),
         },
@@ -153,5 +179,9 @@ def nl_to_guarded_sql(
     args = json.loads(tool_call.function.arguments or "{}")
     sql = args.get("sql") or ""
     explanation = args.get("explanation")
-    guarded = guard_select_sql(sql, dialect=dialect, policy=policy)
+    try:
+        guarded = guard_select_sql(sql, dialect=dialect, policy=policy)
+    except SqlGuardError as exc:
+        exc.sql = sql
+        raise
     return guarded, explanation, None

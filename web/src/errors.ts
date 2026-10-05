@@ -130,6 +130,11 @@ function normalize(raw: unknown): string {
   if (typeof raw === 'object' && raw && 'detail' in raw) {
     return normalize((raw as { detail: unknown }).detail)
   }
+  if (typeof raw === 'object' && raw && 'message' in raw) {
+    const msg = String((raw as { message: unknown }).message || '')
+    const hint = 'hint' in raw ? String((raw as { hint: unknown }).hint || '') : ''
+    return [msg, hint].filter(Boolean).join(' ')
+  }
   try {
     return JSON.stringify(raw)
   } catch {

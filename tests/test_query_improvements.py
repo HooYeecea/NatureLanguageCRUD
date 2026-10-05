@@ -59,3 +59,28 @@ def test_heuristic_list_all_allows_unfiltered():
         1,
     )
     assert note is None
+
+
+def test_heuristic_table_alias():
+    from app.glossary import glossary_context_text, heuristic_column_alias, heuristic_table_alias, merge_glossary
+
+    assert heuristic_table_alias("sys_role") == "角色"
+    assert heuristic_column_alias("perms") == "权限标识"
+    existing = [{"table": "sys_role", "alias": "角色表", "synonyms": [], "columns": []}]
+    suggested = [{"table": "sys_role", "alias": "角色", "synonyms": ["sys_role"], "columns": []}]
+    merged = merge_glossary(existing, suggested)
+    assert merged[0]["alias"] == "角色表"
+    text = glossary_context_text(merged)
+    assert "sys_role" in text
+    assert "角色表" in text
+
+
+def test_explain_guard_whitelist():
+    from app.query.guard_explain import explain_guard
+
+    explained = explain_guard("Table not in whitelist: sys_role")
+    assert "不在当前允许范围" in explained["message"]
+    assert explained["hint"]
+
+    explained = explain_guard("UPDATE requires a WHERE filter under current policy")
+    assert "必须带条件" in explained["message"]

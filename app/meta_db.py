@@ -126,6 +126,17 @@ def init_meta_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS glossaries (
+                id TEXT PRIMARY KEY,
+                connection_id TEXT NOT NULL UNIQUE,
+                glossary_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE
+            )
+            """
+        )
 
 
 def _row_to_dict(row: sqlite3.Row, include_password: bool = False) -> dict[str, Any]:
@@ -254,5 +265,6 @@ def delete_connection(conn_id: str) -> bool:
         conn.execute("DELETE FROM access_policies WHERE connection_id = ?", (conn_id,))
         conn.execute("DELETE FROM pending_mutations WHERE connection_id = ?", (conn_id,))
         conn.execute("DELETE FROM schema_analyses WHERE connection_id = ?", (conn_id,))
+        conn.execute("DELETE FROM glossaries WHERE connection_id = ?", (conn_id,))
         cur = conn.execute("DELETE FROM connections WHERE id = ?", (conn_id,))
         return cur.rowcount > 0

@@ -6,7 +6,9 @@ from app.analysis_store import get_analysis, save_analysis
 from app.db.engines import create_db_engine
 from app.db.samples import fetch_table_samples
 from app.db.schema import get_engine_cfg, introspect_schema
-from app.models import AccessPolicyOut, AccessPolicyUpsert, TablePolicy
+from app.glossary import merge_glossary, suggest_glossary
+from app.glossary_store import get_glossary, save_glossary
+from app.models import AccessPolicyOut, AccessPolicyUpsert, GlossaryOut, GlossaryUpsert, TablePolicy
 from app.schema_interpret import interpret_schema, llm_status
 from app.settings_store import update_llm_settings
 
@@ -150,6 +152,14 @@ def interpret_selected_tables(connection_id: str, body: InterpretRequest):
     if not body.force:
         cached = get_analysis(connection_id, table_refs)
         if cached:
+            _ensure_glossary(
+                connection_id,
+                [
+                    {"name": t.table, "schema_name": t.schema_name, "columns": []}
+                    for t in body.tables
+                ],
+                cached,
+            )
             return InterpretResponse(
                 connection_id=connection_id,
                 dialect=data["dialect"],
@@ -209,6 +219,7 @@ def interpret_selected_tables(connection_id: str, body: InterpretRequest):
 
     result["dialect"] = data["dialect"]
     saved = save_analysis(connection_id, table_refs, result)
+    _ensure_glossary(connection_id, selected, result)
 
     return InterpretResponse(
         connection_id=connection_id,
@@ -259,3 +270,43 @@ def get_cached_analysis(connection_id: str):
         cached=True,
         updated_at=cached["updated_at"].isoformat() if cached.get("updated_at") else None,
     )
+
+
+def _ensure_glossary(
+    connection_id: str,
+    tables: list[dict],
+    analysis: dict | None,
+) -> None:
+    suggested = suggest_glossary(tables, analysis)
+    merged = merge_glossary(get_glossary(connection_id), suggested)
+    save_glossary(connection_id, merged)
+
+
+@router.get(
+    "/api/connections/{connection_id}/workspace/glossary",
+    response_model=GlossaryOut,
+)
+def get_workspace_glossary(connection_id: str):
+    data = meta_db.get_connection(connection_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    return GlossaryOut(connection_id=connection_id, tables=get_glossary(connection_id))
+
+
+@router.put(
+    "/api/connections/{connection_id}/workspace/glossary",
+    response_model=GlossaryOut,
+)
+def put_workspace_glossary(connection_id: str, body: GlossaryUpsert):
+    data = meta_db.get_connection(connection_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    saved = save_glossary(connection_id, [t.model_dump() for t in body.tables])
+    audit.write_audit(
+        action="glossary.update",
+        status="success",
+        connection_id=connection_id,
+        summary=f"updated glossary ({len(saved)} tables)",
+        detail={"table_count": len(saved)},
+    )
+    return GlossaryOut(connection_id=connection_id, tables=saved)

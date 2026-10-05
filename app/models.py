@@ -162,9 +162,16 @@ class RawSqlQueryRequest(BaseModel):
     dry_run: bool = False
 
 
+class ChatTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = ""
+    sql: Optional[str] = None
+
+
 class NlQueryRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
     dry_run: bool = False
+    history: list[ChatTurn] = Field(default_factory=list)
 
 
 class QueryResult(BaseModel):
@@ -197,6 +204,7 @@ class MutateRequest(BaseModel):
 
 class NlMutateRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
+    history: list[ChatTurn] = Field(default_factory=list)
 
 
 class MutatePreviewResult(BaseModel):
@@ -237,3 +245,26 @@ class AuditLogOut(BaseModel):
     summary: Optional[str] = None
     detail: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
+
+
+class GlossaryColumn(BaseModel):
+    name: str
+    alias: str = ""
+    synonyms: list[str] = Field(default_factory=list)
+
+
+class GlossaryTable(BaseModel):
+    table: str
+    schema_name: Optional[str] = None
+    alias: str = ""
+    synonyms: list[str] = Field(default_factory=list)
+    columns: list[GlossaryColumn] = Field(default_factory=list)
+
+
+class GlossaryOut(BaseModel):
+    connection_id: str
+    tables: list[GlossaryTable] = Field(default_factory=list)
+
+
+class GlossaryUpsert(BaseModel):
+    tables: list[GlossaryTable] = Field(default_factory=list)
