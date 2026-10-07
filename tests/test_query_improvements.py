@@ -84,3 +84,29 @@ def test_explain_guard_whitelist():
 
     explained = explain_guard("UPDATE requires a WHERE filter under current policy")
     assert "必须带条件" in explained["message"]
+
+
+def test_mutate_ack_threshold_default():
+    from app.policy_store import default_policy_dict
+
+    p = default_policy_dict("c1")
+    assert p["confirm_rows_threshold"] == 10
+
+
+def test_readback_delete_uses_before_rows():
+    from app.mutate.builder import MutatePlan
+    from app.mutate.executor import readback_rows
+
+    plan = MutatePlan(
+        operation="delete",
+        table="tasks",
+        schema_name=None,
+        sql="DELETE FROM tasks WHERE id = 1",
+        count_sql="SELECT 1",
+        preview_sql="SELECT * FROM tasks WHERE id = 1",
+        filters=[{"column": "id", "op": "=", "value": 1}],
+    )
+    before = [{"id": 1, "title": "x"}]
+    # engine unused for delete path
+    rows = readback_rows(None, plan, dialect="sqlite", before_rows=before)  # type: ignore[arg-type]
+    assert rows == before

@@ -776,6 +776,24 @@ td {
   align-items: center;
 }
 
+.confirm-bar.warn {
+  background: #fff1e8;
+  border-color: #e8b08a;
+}
+
+.confirm-copy {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.ack-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  color: #7a4a1e;
+}
+
 .foot {
   margin-top: 1rem;
   text-align: center;

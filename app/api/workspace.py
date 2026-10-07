@@ -118,6 +118,7 @@ def select_workspace_tables(connection_id: str, body: SelectTablesRequest):
         require_where_for_delete=existing.get("require_where_for_delete", True),
         max_rows_per_mutation=existing.get("max_rows_per_mutation", 100),
         max_rows_per_query=existing.get("max_rows_per_query", 500),
+        confirm_rows_threshold=existing.get("confirm_rows_threshold", 10),
         tables=[
             TablePolicy(
                 table=t.table,

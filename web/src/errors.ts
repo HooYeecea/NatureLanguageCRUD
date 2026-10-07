@@ -86,6 +86,10 @@ export function friendlyError(raw: unknown, fallback = '操作失败，请稍后
     return '按安全策略，更新/删除必须带条件，请说明要改哪一条记录。'
   }
 
+  if (lower.includes('二次确认') || lower.includes('ack') || text.includes('勾选确认')) {
+    return text.length > 160 ? `${text.slice(0, 160)}…` : text
+  }
+
   // Strip long traceback / sqlalchemy / wrapper prefixes for leftover cases
   const cleaned = text
     .replace(/^llm request failed:\s*/i, '')

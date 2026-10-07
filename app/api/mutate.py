@@ -24,6 +24,7 @@ from app.mutate import (
     mark_executed,
     nl_to_mutate_plan,
     preview_plan,
+    readback_rows,
 )
 from app.query import LlmNotConfigured, SqlGuardError
 from app.glossary import glossary_context_text
@@ -71,7 +72,19 @@ def _preview_from_plan(
     finally:
         engine.dispose()
 
-    pending = create_pending(connection_id, _plan_to_dict(plan))
+    ack_threshold = int(policy.get("confirm_rows_threshold") or 10)
+    requires_ack = (
+        not stats["blocked"]
+        and plan.operation in ("update", "delete")
+        and int(stats["affected_count"] or 0) >= ack_threshold
+    )
+    plan_payload = _plan_to_dict(plan)
+    plan_payload["_preview_meta"] = {
+        "affected_count": stats["affected_count"],
+        "requires_ack": requires_ack,
+        "ack_threshold": ack_threshold,
+    }
+    pending = create_pending(connection_id, plan_payload)
     if stats["blocked"]:
         mark_cancelled(pending["id"])
 
@@ -91,6 +104,7 @@ def _preview_from_plan(
             "sql": plan.sql,
             "affected_count": stats["affected_count"],
             "blocked": stats["blocked"],
+            "requires_ack": requires_ack,
             "prompt": prompt,
         },
     )
@@ -105,6 +119,8 @@ def _preview_from_plan(
         sample_rows=stats["sample_rows"],
         blocked=stats["blocked"],
         block_reason=stats["block_reason"],
+        requires_ack=requires_ack,
+        ack_threshold=ack_threshold,
         expires_at=pending["expires_at"],
         explanation=explanation,
         reply=reply,
@@ -257,6 +273,20 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
         raise HTTPException(status_code=400, detail="Preview expired; request a new preview")
 
     plan_data = pending["plan"]
+    preview_meta = plan_data.get("_preview_meta") or {}
+    requires_ack = bool(preview_meta.get("requires_ack"))
+    if requires_ack and not body.ack_large_impact:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": (
+                    f"该操作将影响约 {preview_meta.get('affected_count')} 行，"
+                    f"已达到二次确认阈值（≥{preview_meta.get('ack_threshold', 10)}）。"
+                ),
+                "hint": "请在界面勾选确认后再执行。",
+            },
+        )
+
     try:
         plan = build_mutate_plan(
             dialect=connection["dialect"],
@@ -293,7 +323,31 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
                 detail={"preview_id": body.preview_id, "sql": plan.sql},
             )
             raise HTTPException(status_code=400, detail=stats["block_reason"])
+        # Re-check ack against live count in case data changed since preview
+        ack_threshold = int(policy.get("confirm_rows_threshold") or 10)
+        live_requires_ack = (
+            plan.operation in ("update", "delete")
+            and int(stats["affected_count"] or 0) >= ack_threshold
+        )
+        if live_requires_ack and not body.ack_large_impact:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": (
+                        f"当前将影响 {stats['affected_count']} 行，"
+                        f"已达到二次确认阈值（≥{ack_threshold}）。"
+                    ),
+                    "hint": "请勾选确认后再执行。",
+                },
+            )
         result = execute_plan(engine, plan)
+        changed = readback_rows(
+            engine,
+            plan,
+            dialect=connection["dialect"],
+            lastrowid=result.get("lastrowid"),
+            before_rows=result.get("before_rows") or [],
+        )
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -309,6 +363,7 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
         engine.dispose()
 
     mark_executed(pending["id"])
+    columns = list(changed[0].keys()) if changed else []
     audit.write_audit(
         action="mutate.confirm",
         status="success",
@@ -320,6 +375,7 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
             "table": plan.table,
             "sql": plan.sql,
             "rowcount": result["rowcount"],
+            "changed_row_count": len(changed),
         },
     )
     return MutateExecuteResult(
@@ -330,6 +386,8 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
         rowcount=int(result["rowcount"] or 0),
         lastrowid=result.get("lastrowid"),
         status="executed",
+        changed_rows=changed,
+        columns=columns,
     )
 
 

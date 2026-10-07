@@ -112,6 +112,8 @@ class AccessPolicyUpsert(BaseModel):
     require_where_for_delete: bool = True
     max_rows_per_mutation: int = Field(100, ge=1, le=100_000)
     max_rows_per_query: int = Field(500, ge=1, le=100_000)
+    # update/delete at or above this count need an extra ack on confirm
+    confirm_rows_threshold: int = Field(10, ge=1, le=100_000)
     tables: list[TablePolicy] = Field(default_factory=list)
 
 
@@ -217,6 +219,8 @@ class MutatePreviewResult(BaseModel):
     sample_rows: list[dict[str, Any]] = Field(default_factory=list)
     blocked: bool = False
     block_reason: Optional[str] = None
+    requires_ack: bool = False
+    ack_threshold: int = 10
     expires_at: datetime
     explanation: Optional[str] = None
     reply: Optional[str] = None
@@ -224,6 +228,7 @@ class MutatePreviewResult(BaseModel):
 
 class MutateConfirmRequest(BaseModel):
     preview_id: str
+    ack_large_impact: bool = False
 
 
 class MutateExecuteResult(BaseModel):
@@ -234,6 +239,8 @@ class MutateExecuteResult(BaseModel):
     rowcount: int
     lastrowid: Optional[int] = None
     status: str = "executed"
+    changed_rows: list[dict[str, Any]] = Field(default_factory=list)
+    columns: list[str] = Field(default_factory=list)
 
 
 class AuditLogOut(BaseModel):

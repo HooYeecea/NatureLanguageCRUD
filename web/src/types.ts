@@ -101,8 +101,22 @@ export type MutatePreview = {
   sample_rows: Record<string, unknown>[]
   blocked: boolean
   block_reason?: string | null
+  requires_ack?: boolean
+  ack_threshold?: number
   explanation?: string | null
   reply?: string | null
+}
+
+export type MutateExecuteResult = {
+  preview_id: string
+  operation: string
+  table: string
+  sql: string
+  rowcount: number
+  lastrowid?: number | null
+  status: string
+  changed_rows: Record<string, unknown>[]
+  columns: string[]
 }
 
 export type Settings = {

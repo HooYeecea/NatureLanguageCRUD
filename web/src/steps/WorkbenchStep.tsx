@@ -1,48 +1,68 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api } from '../api'
 import { friendlyError } from '../errors'
+import type { PersistedChatItem } from '../session'
 import type { ChatTurn, Connection, InterpretResult, MutatePreview, QueryResult } from '../types'
 
 type Props = {
   connection: Connection
   interpret: InterpretResult
+  initialItems?: PersistedChatItem[]
+  initialMode?: 'query' | 'mutate'
+  onChatChange?: (items: PersistedChatItem[]) => void
+  onModeChange?: (mode: 'query' | 'mutate') => void
   onBack: () => void
   onRestart: () => void
 }
 
-type ChatItem = {
-  role: 'user' | 'assistant'
-  kind?: 'text' | 'sql' | 'result' | 'error'
-  text: string
-  sql?: string
-  editableSql?: boolean
-  rows?: Record<string, unknown>[]
-  rowCount?: number
+type ChatItem = PersistedChatItem & {
   preview?: MutatePreview
-  validationOk?: boolean | null
-  validationNote?: string | null
-  originalSql?: string | null
 }
 
-export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Props) {
-  const [mode, setMode] = useState<'query' | 'mutate'>('query')
+function defaultWelcome(interpret: InterpretResult): ChatItem {
+  return {
+    role: 'assistant',
+    kind: 'text',
+    text: `已就绪。当前范围：${interpret.selected_tables.join(', ')}。可以用自然语言查询或提出写入（写入需确认）。支持追问；大批量写入需二次确认；执行后会回读变更行。`,
+  }
+}
+
+export function WorkbenchStep({
+  connection,
+  interpret,
+  initialItems,
+  initialMode = 'query',
+  onChatChange,
+  onModeChange,
+  onBack,
+  onRestart,
+}: Props) {
+  const [mode, setMode] = useState<'query' | 'mutate'>(initialMode)
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [items, setItems] = useState<ChatItem[]>([
-    {
-      role: 'assistant',
-      kind: 'text',
-      text: `已就绪。当前范围：${interpret.selected_tables.join(', ')}。可以用自然语言查询或提出写入（写入需确认）。支持追问，例如「再按权限过滤」；生成的 SQL 可编辑后再执行。`,
-    },
-  ])
+  const [items, setItems] = useState<ChatItem[]>(
+    initialItems && initialItems.length > 0 ? initialItems : [defaultWelcome(interpret)],
+  )
   const [pending, setPending] = useState<MutatePreview | null>(null)
+  const [ackLarge, setAckLarge] = useState(false)
   const chatRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const el = chatRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [items, busy])
+
+  useEffect(() => {
+    onChatChange?.(
+      items.map(({ preview: _p, ...rest }) => rest),
+    )
+  }, [items, onChatChange])
+
+  function setModeAndNotify(next: 'query' | 'mutate') {
+    setMode(next)
+    onModeChange?.(next)
+  }
 
   function appendQueryResult(result: QueryResult, sqlLabel: string) {
     const next: ChatItem[] = []
@@ -104,6 +124,7 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
     setItems((prev) => [...prev, { role: 'user', kind: 'text', text: userText }])
     setBusy(true)
     setError(null)
+    setAckLarge(false)
     try {
       if (mode === 'query') {
         const result: QueryResult = await api.nlQuery(connection.id, userText, { history })
@@ -121,12 +142,26 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
             sql: preview.sql,
           })
         }
+        if (preview.sample_rows?.length) {
+          next.push({
+            role: 'assistant',
+            kind: 'result',
+            text:
+              preview.operation === 'delete'
+                ? `将删除的样例行（${preview.sample_rows.length}）`
+                : `将影响的样例行（${preview.sample_rows.length}）`,
+            rows: preview.sample_rows,
+            rowCount: preview.sample_rows.length,
+          })
+        }
         next.push({
           role: 'assistant',
           kind: 'text',
           text: preview.blocked
             ? `已拦截：${friendlyError(preview.block_reason, '该写入被策略拦截')}`
-            : `预览 ${preview.operation} → ${preview.table}，影响约 ${preview.affected_count} 行。请确认后执行。`,
+            : preview.requires_ack
+              ? `预览 ${preview.operation} → ${preview.table}，影响约 ${preview.affected_count} 行（≥${preview.ack_threshold}，需二次确认）。`
+              : `预览 ${preview.operation} → ${preview.table}，影响约 ${preview.affected_count} 行。请确认后执行。`,
           preview,
         })
         setItems((prev) => [...prev, ...next])
@@ -166,20 +201,39 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
 
   async function confirmPending() {
     if (!pending) return
+    if (pending.requires_ack && !ackLarge) {
+      setError(`影响约 ${pending.affected_count} 行，请先勾选二次确认。`)
+      return
+    }
     setBusy(true)
     setError(null)
     try {
-      const result = await api.confirmMutate(connection.id, pending.preview_id)
-      setItems((prev) => [
-        ...prev,
+      const result = await api.confirmMutate(connection.id, pending.preview_id, {
+        ack_large_impact: ackLarge || !pending.requires_ack,
+      })
+      const next: ChatItem[] = [
         {
           role: 'assistant',
           kind: 'text',
           text: `已执行 ${result.operation}，影响 ${result.rowcount} 行。`,
           sql: result.sql,
         },
-      ])
+      ]
+      if (result.changed_rows && result.changed_rows.length > 0) {
+        next.push({
+          role: 'assistant',
+          kind: 'result',
+          text:
+            result.operation === 'delete'
+              ? `已删除的行（回读前快照，${result.changed_rows.length}）`
+              : `变更后回读（${result.changed_rows.length} 行）`,
+          rows: result.changed_rows,
+          rowCount: result.changed_rows.length,
+        })
+      }
+      setItems((prev) => [...prev, ...next])
       setPending(null)
+      setAckLarge(false)
     } catch (err) {
       setError(friendlyError(err))
     } finally {
@@ -200,14 +254,14 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
         <button
           type="button"
           className={`btn ${mode === 'query' ? 'primary' : 'ghost'}`}
-          onClick={() => setMode('query')}
+          onClick={() => setModeAndNotify('query')}
         >
           查询
         </button>
         <button
           type="button"
           className={`btn ${mode === 'mutate' ? 'primary' : 'ghost'}`}
-          onClick={() => setMode('mutate')}
+          onClick={() => setModeAndNotify('mutate')}
         >
           写入（需确认）
         </button>
@@ -267,23 +321,39 @@ export function WorkbenchStep({ connection, interpret, onBack, onRestart }: Prop
       </div>
 
       {pending && (
-        <div className="confirm-bar">
-          <span>
-            待确认：{pending.operation} {pending.table}（{pending.affected_count} 行）
-          </span>
+        <div className={`confirm-bar ${pending.requires_ack ? 'warn' : ''}`}>
+          <div className="confirm-copy">
+            <span>
+              待确认：{pending.operation} {pending.table}（{pending.affected_count} 行）
+            </span>
+            {pending.requires_ack && (
+              <label className="ack-label">
+                <input
+                  type="checkbox"
+                  checked={ackLarge}
+                  onChange={(e) => setAckLarge(e.target.checked)}
+                  disabled={busy}
+                />
+                我确认影响约 {pending.affected_count} 行（≥{pending.ack_threshold}）
+              </label>
+            )}
+          </div>
           <div className="actions">
             <button
               type="button"
               className="btn ghost"
               disabled={busy}
-              onClick={() => setPending(null)}
+              onClick={() => {
+                setPending(null)
+                setAckLarge(false)
+              }}
             >
               取消
             </button>
             <button
               type="button"
               className="btn primary"
-              disabled={busy}
+              disabled={busy || (pending.requires_ack && !ackLarge)}
               onClick={confirmPending}
             >
               确认执行

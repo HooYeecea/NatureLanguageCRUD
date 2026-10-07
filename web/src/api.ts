@@ -4,6 +4,7 @@ import type {
   Dialect,
   GlossaryTable,
   InterpretResult,
+  MutateExecuteResult,
   MutatePreview,
   QueryResult,
   SchemaOverview,
@@ -150,16 +151,16 @@ export const api = {
       body: JSON.stringify({ prompt, history }),
     }),
 
-  confirmMutate: (id: string, preview_id: string) =>
-    request<{
-      preview_id: string
-      operation: string
-      table: string
-      sql: string
-      rowcount: number
-      status: string
-    }>(`/api/connections/${id}/mutate/confirm`, {
+  confirmMutate: (
+    id: string,
+    preview_id: string,
+    options: { ack_large_impact?: boolean } = {},
+  ) =>
+    request<MutateExecuteResult>(`/api/connections/${id}/mutate/confirm`, {
       method: 'POST',
-      body: JSON.stringify({ preview_id }),
+      body: JSON.stringify({
+        preview_id,
+        ack_large_impact: options.ack_large_impact ?? false,
+      }),
     }),
 }

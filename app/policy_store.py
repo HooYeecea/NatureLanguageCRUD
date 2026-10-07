@@ -33,6 +33,7 @@ def default_policy_dict(connection_id: str) -> dict[str, Any]:
         "require_where_for_delete": True,
         "max_rows_per_mutation": 100,
         "max_rows_per_query": 500,
+        "confirm_rows_threshold": 10,
         "tables": [],
         "updated_at": datetime.now(timezone.utc),
     }
@@ -50,6 +51,7 @@ def get_policy(connection_id: str) -> dict[str, Any]:
     data = json.loads(row["policy_json"])
     data["connection_id"] = connection_id
     data["updated_at"] = datetime.fromisoformat(row["updated_at"])
+    data.setdefault("confirm_rows_threshold", 10)
     return data
 
 
@@ -60,6 +62,7 @@ def upsert_policy(connection_id: str, payload: dict[str, Any]) -> dict[str, Any]
         "require_where_for_delete": payload.get("require_where_for_delete", True),
         "max_rows_per_mutation": payload.get("max_rows_per_mutation", 100),
         "max_rows_per_query": payload.get("max_rows_per_query", 500),
+        "confirm_rows_threshold": payload.get("confirm_rows_threshold", 10),
         "tables": payload.get("tables") or [],
     }
     with meta_conn() as conn:
