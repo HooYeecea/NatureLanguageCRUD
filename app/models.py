@@ -190,6 +190,8 @@ class QueryResult(BaseModel):
     original_sql: Optional[str] = None
     validation_ok: Optional[bool] = None
     validation_note: Optional[str] = None
+    # True when returned rows hit the enforced LIMIT (likely more rows exist)
+    truncated: bool = False
 
 
 MutationOp = Literal["insert", "update", "delete"]

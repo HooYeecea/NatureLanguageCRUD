@@ -17,12 +17,28 @@ def critique_query_result(
     columns: list[str],
     rows: list[dict[str, Any]],
     row_count: int,
+    *,
+    use_llm: bool = False,
 ) -> dict[str, Any]:
     """
-    Returns {ok, reason, rewrite_hint}.
-    Falls back to heuristics if the LLM call fails.
+    Returns {ok, reason, rewrite_hint, source}.
+
+    Cheap path (default): heuristics only — no LLM call when results look fine,
+    and rewrite hints come from the heuristic when suspicious.
+    Set use_llm=True to ask the model for a richer critique (extra latency/cost).
     """
     heuristic = heuristic_mismatch(prompt, sql, rows, row_count)
+    if not heuristic:
+        return {"ok": True, "reason": "", "rewrite_hint": "", "source": "heuristic"}
+
+    if not use_llm:
+        return {
+            "ok": False,
+            "reason": heuristic,
+            "rewrite_hint": heuristic,
+            "source": "heuristic",
+        }
+
     try:
         cfg = get_llm_settings()
         if not cfg["api_key"]:
@@ -71,12 +87,20 @@ def critique_query_result(
         ok = bool(parsed.get("ok"))
         reason = str(parsed.get("reason") or heuristic or "")
         hint = str(parsed.get("rewrite_hint") or "")
-        if heuristic and ok is True and "没有 WHERE" in heuristic:
+        if heuristic and ok is True and ("没有 WHERE" in heuristic or "整表" in heuristic):
             ok = False
             reason = heuristic
             hint = hint or heuristic
-        return {"ok": ok, "reason": reason, "rewrite_hint": hint}
+        return {
+            "ok": ok,
+            "reason": reason,
+            "rewrite_hint": hint or reason,
+            "source": "llm",
+        }
     except Exception:  # noqa: BLE001
-        if heuristic:
-            return {"ok": False, "reason": heuristic, "rewrite_hint": heuristic}
-        return {"ok": True, "reason": "", "rewrite_hint": ""}
+        return {
+            "ok": False,
+            "reason": heuristic,
+            "rewrite_hint": heuristic,
+            "source": "heuristic",
+        }

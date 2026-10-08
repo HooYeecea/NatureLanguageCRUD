@@ -105,6 +105,11 @@ def _run_guarded(
             "prompt": prompt,
         },
     )
+    truncated = bool(
+        guarded.limit is not None
+        and result["row_count"] > 0
+        and result["row_count"] >= int(guarded.limit)
+    )
     return QueryResult(
         sql=guarded.sql,
         tables=guarded.tables,
@@ -119,6 +124,7 @@ def _run_guarded(
         original_sql=original_sql,
         validation_ok=validation_ok,
         validation_note=validation_note,
+        truncated=truncated,
     )
 
 
@@ -297,12 +303,14 @@ def query_natural_language(connection_id: str, body: NlQueryRequest):
     if body.dry_run or not guarded.sql:
         return first
 
+    # Cheap path: heuristic only. Skip LLM judge when results look fine.
     critique = critique_query_result(
         body.prompt,
         first.sql,
         first.columns,
         first.rows,
         first.row_count,
+        use_llm=False,
     )
     if critique.get("ok"):
         first.validation_ok = True
@@ -312,11 +320,7 @@ def query_natural_language(connection_id: str, body: NlQueryRequest):
     try:
         guarded2, explanation2, reply2 = nl_to_guarded_sql(
             body.prompt,
-            dialect=connection["dialect"],
-            policy=policy,
-            schema_tables=schema_tables,
-            analysis_context=analysis_ctx,
-            sample_context=sample_ctx,
+            **gen_kwargs,
             previous_sql=first.sql,
             rewrite_hint=critique.get("rewrite_hint") or critique.get("reason"),
         )
@@ -361,10 +365,11 @@ def query_natural_language(connection_id: str, body: NlQueryRequest):
         second.columns,
         second.rows,
         second.row_count,
+        use_llm=False,
     )
     second.validation_ok = bool(retry_check.get("ok"))
     if second.validation_ok:
-        second.validation_note = "已根据校验自动改写 SQL 后再查询。"
+        second.validation_note = "已根据启发式校验自动改写 SQL 后再查询。"
     else:
         second.validation_note = (
             retry_check.get("reason")

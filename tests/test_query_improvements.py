@@ -110,3 +110,34 @@ def test_readback_delete_uses_before_rows():
     # engine unused for delete path
     rows = readback_rows(None, plan, dialect="sqlite", before_rows=before)  # type: ignore[arg-type]
     assert rows == before
+
+
+def test_critique_cheap_skips_llm_when_ok():
+    from app.query.validate import critique_query_result
+
+    out = critique_query_result(
+        "列出所有角色",
+        "SELECT role_id, role_name FROM sys_role WHERE 1=1 LIMIT 10",
+        ["role_id", "role_name"],
+        [{"role_id": 1, "role_name": "admin"}],
+        1,
+        use_llm=False,
+    )
+    assert out["ok"] is True
+    assert out["source"] == "heuristic"
+
+
+def test_critique_cheap_flags_unfiltered():
+    from app.query.validate import critique_query_result
+
+    out = critique_query_result(
+        "超级管理员有哪些权限",
+        "SELECT role_id, role_name FROM sys_role LIMIT 500",
+        ["role_id", "role_name"],
+        [{"role_id": 1, "role_name": "超级管理员"}, {"role_id": 2, "role_name": "普通"}],
+        2,
+        use_llm=False,
+    )
+    assert out["ok"] is False
+    assert "WHERE" in out["reason"] or "整表" in out["reason"]
+    assert out["rewrite_hint"]

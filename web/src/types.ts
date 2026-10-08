@@ -90,6 +90,7 @@ export type QueryResult = {
   original_sql?: string | null
   validation_ok?: boolean | null
   validation_note?: string | null
+  truncated?: boolean
 }
 
 export type MutatePreview = {

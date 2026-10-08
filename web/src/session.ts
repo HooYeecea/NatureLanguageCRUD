@@ -15,6 +15,8 @@ export type PersistedChatItem = {
   validationOk?: boolean | null
   validationNote?: string | null
   originalSql?: string | null
+  truncated?: boolean
+  limit?: number | null
 }
 
 export type WorkspaceSession = {

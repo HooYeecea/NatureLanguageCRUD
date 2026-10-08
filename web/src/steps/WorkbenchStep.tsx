@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api } from '../api'
+import { downloadCsv } from '../csv'
 import { friendlyError } from '../errors'
 import type { PersistedChatItem } from '../session'
 import type { ChatTurn, Connection, InterpretResult, MutatePreview, QueryResult } from '../types'
@@ -79,12 +80,18 @@ export function WorkbenchStep({
       })
     }
     if (result.rows && result.rows.length > 0) {
+      const truncNote =
+        result.truncated && result.limit
+          ? ` · 已截断至 LIMIT ${result.limit}，可能还有更多行`
+          : ''
       next.push({
         role: 'assistant',
         kind: 'result',
-        text: `查询结果（${result.row_count} 行）`,
+        text: `查询结果（${result.row_count} 行）${truncNote}`,
         rows: result.rows,
         rowCount: result.row_count,
+        truncated: !!result.truncated,
+        limit: result.limit,
       })
     } else if (result.sql) {
       next.push({
@@ -290,25 +297,50 @@ export function WorkbenchStep({
               </p>
             )}
             {item.rows && item.rows.length > 0 && (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      {Object.keys(item.rows[0]).map((k) => (
-                        <th key={k}>{k}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {item.rows.slice(0, 50).map((row, i) => (
-                      <tr key={i}>
-                        {Object.keys(item.rows![0]).map((k) => (
-                          <td key={k}>{formatCell(row[k])}</td>
+              <div className="result-block">
+                <div className="result-toolbar">
+                  {item.truncated && (
+                    <span className="trunc-note">
+                      结果已截断{item.limit ? `（LIMIT ${item.limit}）` : ''}，导出仅为当前返回行
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    disabled={busy}
+                    onClick={() =>
+                      downloadCsv(
+                        `query-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`,
+                        item.rows!,
+                      )
+                    }
+                  >
+                    导出 CSV
+                  </button>
+                </div>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        {Object.keys(item.rows[0]).map((k) => (
+                          <th key={k}>{k}</th>
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {item.rows.slice(0, 50).map((row, i) => (
+                        <tr key={i}>
+                          {Object.keys(item.rows![0]).map((k) => (
+                            <td key={k}>{formatCell(row[k])}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {item.rows.length > 50 && (
+                  <p className="muted small">界面仅预览前 50 行，导出包含全部 {item.rows.length} 行。</p>
+                )}
               </div>
             )}
           </article>
