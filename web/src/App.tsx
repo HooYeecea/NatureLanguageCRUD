@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { AuditModal } from './components/AuditModal'
 import { Stepper } from './components/Stepper'
 import { SettingsModal } from './components/SettingsModal'
 import { ConnectStep } from './steps/ConnectStep'
@@ -35,16 +36,18 @@ export default function App() {
     restored?.mode || 'query',
   )
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [auditOpen, setAuditOpen] = useState(false)
   const [settings, setSettings] = useState<Settings | null>(null)
+  const [connections, setConnections] = useState<Connection[]>([])
   const [hydrated, setHydrated] = useState(false)
 
   useEffect(() => {
     api.settings().then(setSettings).catch(() => setSettings(null))
-    // Validate restored connection still exists
-    if (restored?.connection?.id) {
-      api
-        .listConnections()
-        .then((list) => {
+    api
+      .listConnections()
+      .then((list) => {
+        setConnections(list)
+        if (restored?.connection?.id) {
           const still = list.find((c) => c.id === restored.connection!.id)
           if (!still) {
             clearWorkspaceSession()
@@ -57,12 +60,10 @@ export default function App() {
           } else {
             setConnection(still)
           }
-        })
-        .catch(() => undefined)
-        .finally(() => setHydrated(true))
-    } else {
-      setHydrated(true)
-    }
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => setHydrated(true))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -112,6 +113,16 @@ export default function App() {
         </div>
         <div className="topbar-right">
           <p className="tagline">连接 → 选表 → 理解结构 → 安全操作</p>
+          <button
+            type="button"
+            className="btn ghost settings-btn"
+            onClick={() => {
+              api.listConnections().then(setConnections).catch(() => undefined)
+              setAuditOpen(true)
+            }}
+          >
+            审计
+          </button>
           <button
             type="button"
             className="btn ghost settings-btn"
@@ -186,6 +197,12 @@ export default function App() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         onSaved={(s) => setSettings(s)}
+      />
+      <AuditModal
+        open={auditOpen}
+        onClose={() => setAuditOpen(false)}
+        connectionId={connection?.id}
+        connections={connections}
       />
     </div>
   )

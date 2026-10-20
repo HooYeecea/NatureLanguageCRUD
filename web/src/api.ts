@@ -1,4 +1,5 @@
 import type {
+  AuditLog,
   ChatTurn,
   Connection,
   Dialect,
@@ -163,4 +164,23 @@ export const api = {
         ack_large_impact: options.ack_large_impact ?? false,
       }),
     }),
+
+  listAudit: (params: {
+    connection_id?: string
+    action?: string
+    status?: string
+    limit?: number
+    offset?: number
+  } = {}) => {
+    const qs = new URLSearchParams()
+    if (params.connection_id) qs.set('connection_id', params.connection_id)
+    if (params.action) qs.set('action', params.action)
+    if (params.status) qs.set('status', params.status)
+    if (params.limit != null) qs.set('limit', String(params.limit))
+    if (params.offset != null) qs.set('offset', String(params.offset))
+    const q = qs.toString()
+    return request<AuditLog[]>(`/api/audit${q ? `?${q}` : ''}`)
+  },
+
+  getAudit: (id: string) => request<AuditLog>(`/api/audit/${id}`),
 }

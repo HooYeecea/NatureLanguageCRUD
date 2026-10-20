@@ -128,6 +128,17 @@ export type Settings = {
   source?: string | null
 }
 
+export type AuditLog = {
+  id: string
+  connection_id?: string | null
+  action: string
+  status: string
+  actor?: string | null
+  summary?: string | null
+  detail: Record<string, unknown>
+  created_at: string
+}
+
 export type WizardState = {
   step: number
   connection: Connection | null

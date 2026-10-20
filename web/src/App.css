@@ -869,6 +869,130 @@ td {
   text-align: center;
 }
 
+.audit-modal {
+  width: min(960px, 100%);
+  max-height: calc(100vh - 2rem);
+  overflow: hidden;
+}
+
+.audit-filters {
+  display: grid;
+  grid-template-columns: 1.2fr 0.9fr 1.2fr auto;
+  gap: 0.5rem;
+  margin-bottom: 0.85rem;
+}
+
+.audit-filters select,
+.audit-filters input {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+  background: #fff;
+}
+
+.audit-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) 1fr;
+  gap: 0.85rem;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.audit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  max-height: min(62vh, 560px);
+  display: grid;
+  gap: 0.45rem;
+}
+
+.audit-item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.7rem 0.8rem;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+}
+
+.audit-item.on,
+.audit-item:hover {
+  border-color: #9ec9c0;
+  background: #f3faf7;
+}
+
+.audit-item-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.status-pill {
+  display: inline-flex;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  background: #e8eef2;
+  color: #445;
+}
+
+.status-pill.success {
+  background: #d8eee8;
+  color: var(--primary);
+}
+
+.status-pill.error {
+  background: #f8e4e4;
+  color: var(--danger);
+}
+
+.status-pill.blocked {
+  background: #fff1e0;
+  color: #9a5b16;
+}
+
+.audit-detail {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
+  background: #fff;
+  overflow: auto;
+  max-height: min(62vh, 560px);
+}
+
+.audit-detail h3,
+.audit-detail h4 {
+  margin: 0.7rem 0 0.35rem;
+  font-size: 0.98rem;
+}
+
+.audit-detail h3 {
+  margin-top: 0;
+  font-size: 1.05rem;
+}
+
+.audit-meta {
+  margin: 0.3rem 0 0.6rem;
+  padding-left: 1.1rem;
+}
+
+.audit-json {
+  margin: 0.4rem 0 0;
+  padding: 0.7rem;
+  background: #f6f1e7;
+  border-radius: 10px;
+  overflow: auto;
+  font-size: 0.8rem;
+  max-height: 220px;
+}
+
 @media (max-width: 860px) {
   .stepper,
   .dialect-grid,
@@ -879,6 +1003,11 @@ td {
   .topbar {
     flex-direction: column;
     align-items: start;
+  }
+
+  .audit-filters,
+  .audit-layout {
+    grid-template-columns: 1fr;
   }
 }
 
