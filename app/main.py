@@ -13,11 +13,18 @@ from app.api import (
     query_router,
     workspace_router,
 )
-from app.config import DEMO_DB_PATH
+from app.config import DEMO_DB_PATH, assert_secret_key_safe, is_production, secret_key_is_insecure
 from app.demo_seed import ensure_demo_db
 
 
 def bootstrap() -> None:
+    assert_secret_key_safe()
+    if not is_production() and secret_key_is_insecure():
+        print(
+            "[warn] WORKBENCH_SECRET_KEY is insecure/default. "
+            "Fine for local development; set a long random key before production "
+            "(WORKBENCH_ENV=production will refuse to start)."
+        )
     meta_db.init_meta_db()
     ensure_demo_db()
     existing = meta_db.list_connections()

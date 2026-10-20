@@ -8,3 +8,4 @@ workbench.db
 .pytest_cache/
 web/node_modules/
 web/dist/
+.gai/

@@ -9,6 +9,7 @@ load_dotenv(ROOT_DIR / ".env")
 META_DB_PATH = ROOT_DIR / "workbench.db"
 DEMO_DB_PATH = ROOT_DIR / "demo.db"
 
+WORKBENCH_ENV = (os.getenv("WORKBENCH_ENV") or "development").strip().lower()
 SECRET_KEY = os.getenv("WORKBENCH_SECRET_KEY", "dev-only-change-me")
 
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
@@ -16,3 +17,39 @@ LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
 
 SUPPORTED_DIALECTS = ("sqlite", "mysql", "postgresql", "sqlserver")
+
+_INSECURE_SECRETS = frozenset(
+    {
+        "",
+        "dev-only-change-me",
+        "change-me",
+        "change-me-to-a-long-random-string",
+        "secret",
+        "password",
+    }
+)
+
+
+def is_production() -> bool:
+    return WORKBENCH_ENV in ("production", "prod")
+
+
+def secret_key_is_insecure(secret: str | None = None) -> bool:
+    value = (secret if secret is not None else SECRET_KEY) or ""
+    if value.strip() in _INSECURE_SECRETS:
+        return True
+    if len(value.strip()) < 16:
+        return True
+    return False
+
+
+def assert_secret_key_safe() -> None:
+    """Refuse to start in production with a default/short encryption key."""
+    if not is_production():
+        return
+    if secret_key_is_insecure(SECRET_KEY):
+        raise RuntimeError(
+            "Unsafe WORKBENCH_SECRET_KEY in production. "
+            "Set WORKBENCH_SECRET_KEY to a long random string (≥16 chars) in .env, "
+            "or set WORKBENCH_ENV=development for local use only."
+        )
