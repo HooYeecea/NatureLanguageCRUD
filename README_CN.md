@@ -10,14 +10,19 @@
 
 - **多数据库连接**：SQLite、MySQL、PostgreSQL、SQL Server
 - **向导式界面**：连接 → 选表 → 解读关系 → 工作台
-- **访问策略**：表白名单 / 字段白黑名单、操作权限、行数上限、更新删除强制 WHERE
+- **选表搜索**：按表名 / 中文别名 / 字段过滤，并按 schema 分组
+- **业务词典**：表/字段别名注入 NL 提示（解读页可编辑）
+- **访问策略**：表白名单 / 字段黑白名单、操作权限、行数上限、更新删除强制 WHERE
 - **受控查询**：自然语言 → 仅允许 SELECT，经 sqlglot 校验并强制 `LIMIT`
-- **样例辅助**：解读与查写时抽取少量脱敏样例行（不落分析缓存），帮助模型认识真实取值
-- **结果校验**：点名具体对象却整表倒出时，会自动改写一次；也可在工作台编辑 SQL 再执行（仍走 SELECT 守卫）
-- **受限写入**：结构化 insert/update/delete → 预览影响 → 确认执行
-- **表关系分析缓存**：相同选表可复用分析结果；支持重新用大模型分析
-- **API 设置界面**：API Key / Base URL / Model（下拉预设 + 自定义），Key 加密存储
-- **审计日志**：连接、策略、查询、写入等关键操作可追溯
+- **样例辅助**：解读与查写时抽取少量脱敏样例行（不落分析缓存）
+- **低成本结果校验**：优先启发式；点名对象却整表倒出时自动改写一次；也可编辑 SQL 再执行
+- **多轮对话**：追问会复用近期问题与 SQL
+- **受限写入**：结构化 insert/update/delete → 预览 → 确认；大批量需二次勾选；执行后回读变更行
+- **CSV 导出**：查询结果可下载；打到 `LIMIT` 时明确提示已截断
+- **工作区恢复**：向导与聊天刷新后尽量保留（`sessionStorage`）
+- **表关系分析缓存**：相同选表可复用；支持重新用大模型分析
+- **API 设置界面**：API Key / Base URL / Model（预设 + 自定义），Key 加密存储
+- **审计界面**：顶栏打开，查看操作历史、SQL 与影响行
 
 ## 目录结构
 
@@ -75,27 +80,30 @@ npm run dev
 浏览器打开 http://127.0.0.1:5173  
 Vite 已将 `/api` 代理到后端 `8000` 端口。
 
-### 3. 配置大模型
+### 3. 配置大模型与密钥
 
 在界面右上角打开 **API 设置**，或在 `.env` 中配置：
 
 ```env
+WORKBENCH_ENV=development
+WORKBENCH_SECRET_KEY=change-me-to-a-long-random-string
 LLM_API_KEY=sk-...
 LLM_BASE_URL=https://api.deepseek.com
 LLM_MODEL=deepseek-chat
-WORKBENCH_SECRET_KEY=change-me-to-a-long-random-string
 ```
 
-界面配置的 Key 优先于 `.env`，并加密保存在 `workbench.db`。
+- 界面配置的 LLM Key 优先于 `.env`，并加密保存在 `workbench.db`。
+- 当 `WORKBENCH_ENV=production` 时，若 `WORKBENCH_SECRET_KEY` 缺失、过短（&lt;16）或仍是占位符，**服务会拒绝启动**。
 
 ## 使用流程
 
 1. 新建或复用数据库连接，并测试连通
-2. 多选需要操作的表
-3. 查看表结构 / 关系解读（会缓存；可点「重新用大模型分析」）
+2. 搜索并多选要操作的表（可用中文别名搜）
+3. 查看表结构 / 关系解读，必要时改业务词典，或重新分析
 4. 进入工作台：
-   - **查询**：自然语言 → SQL → 结果表。生成的 SELECT 可编辑后再执行（仍仅允许查询）
-   - **写入**：自然语言 → 变更预览 → 确认执行
+   - **查询**：自然语言 → SQL → 结果表（可编辑 SQL / 导出 CSV / 追问）
+   - **写入**：自然语言 → 变更预览 → 确认（大批量需勾选；执行后回读）
+5. 点顶栏 **审计** 查看近期 SQL 与影响行
 
 ## 安全机制
 
@@ -103,8 +111,9 @@ WORKBENCH_SECRET_KEY=change-me-to-a-long-random-string
 |------|------|
 | 读 | 仅 SELECT；表白名单；强制最大返回行数 |
 | 样例 | 只对 introspection 确认过的标识符做小 `LIMIT` 读取；带语句超时；密钥列打码；不写入分析缓存 |
-| 写 | 禁止自由 DML；只走结构化 mutate；策略要求 WHERE；预览后确认 |
-| 密钥 | 数据库密码与 LLM API Key 加密落库 |
+| 写 | 禁止自由 DML；只走结构化 mutate；策略要求 WHERE；预览后确认；大批量二次确认 |
+| 密钥 | 数据库密码与 LLM API Key 加密落库；生产环境禁止不安全的 `WORKBENCH_SECRET_KEY` |
+| 审计 | 关键操作落库，可在界面浏览 |
 
 ## 主要接口
 
@@ -112,11 +121,11 @@ WORKBENCH_SECRET_KEY=change-me-to-a-long-random-string
 |------|------|
 | 连接 | `GET/POST /api/connections`、`POST .../test`、`GET .../schema` |
 | 策略 | `GET/PUT /api/connections/{id}/policy` |
-| 工作区 | `PUT .../workspace/tables`、`POST .../workspace/interpret`、`GET .../workspace/analysis` |
+| 工作区 | `PUT .../workspace/tables`、`POST .../workspace/interpret`、`GET .../workspace/analysis`、`GET/PUT .../workspace/glossary` |
 | 查询 | `POST .../query/nl`、`.../query/sql`、`.../query/structured` |
 | 写入 | `POST .../mutate/preview`、`.../mutate/nl`、`.../mutate/confirm` |
 | 设置 | `GET/PUT /api/settings` |
-| 审计 | `GET /api/audit` |
+| 审计 | `GET /api/audit`、`GET /api/audit/{id}` |
 
 ## 说明
 

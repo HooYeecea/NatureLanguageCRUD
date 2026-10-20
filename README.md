@@ -10,14 +10,19 @@ Natural-language workbench for relational databases. Connect your DB, pick table
 
 - **Multi-dialect connections**: SQLite, MySQL, PostgreSQL, SQL Server
 - **Guided UI flow**: Connect → Select tables → Interpret relationships → Workbench
+- **Table search**: filter by name / Chinese alias / columns; group by schema
+- **Business glossary**: table/column aliases injected into NL prompts (editable on interpret step)
 - **Access policy**: table/column whitelist, operation flags, row limits, required WHERE for update/delete
 - **Controlled query**: NL → SELECT only, validated by sqlglot, forced `LIMIT`
 - **Sample-aware SQL**: a few redacted sample rows (not persisted) help the model learn real labels and codes
-- **Answer check**: if a query looks like an unfiltered dump of a named entity, rewrite once; you can still edit SQL and re-run through the guard
-- **Restricted write**: structured insert/update/delete → preview → confirm
+- **Cheap answer check**: heuristics first; rewrite once when a named-entity query looks like a table dump; edit SQL and re-run through the guard
+- **Multi-turn chat**: follow-ups reuse recent questions/SQL
+- **Restricted write**: structured insert/update/delete → preview → confirm; large impact needs a second ack; confirm returns read-back rows
+- **CSV export**: download query results; LIMIT truncation is called out in the UI
+- **Workspace restore**: wizard + chat survive refresh via `sessionStorage`
 - **Schema analysis cache**: reuse relationship interpretation; optional re-analyze with LLM
 - **LLM settings UI**: API Key / Base URL / Model (presets + custom), encrypted key storage
-- **Audit log**: connection, policy, query, and mutate actions
+- **Audit UI**: browse action history, SQL, and row impact from the top bar
 
 ## Project layout
 
@@ -75,27 +80,30 @@ npm run dev
 Open http://127.0.0.1:5173  
 Vite proxies `/api` to the backend on port `8000`.
 
-### 3. Configure LLM
+### 3. Configure LLM and secrets
 
 In the UI click **API Settings** (top-right), or set in `.env`:
 
 ```env
+WORKBENCH_ENV=development
+WORKBENCH_SECRET_KEY=change-me-to-a-long-random-string
 LLM_API_KEY=sk-...
 LLM_BASE_URL=https://api.deepseek.com
 LLM_MODEL=deepseek-chat
-WORKBENCH_SECRET_KEY=change-me-to-a-long-random-string
 ```
 
-UI-configured keys override `.env` and are encrypted in `workbench.db`.
+- UI-configured LLM keys override `.env` and are encrypted in `workbench.db`.
+- With `WORKBENCH_ENV=production`, the app **refuses to start** if `WORKBENCH_SECRET_KEY` is missing, too short (&lt;16), or still a placeholder.
 
 ## Typical usage
 
 1. Create or reuse a database connection and test it
-2. Multi-select tables you want to operate on
-3. Review schema/relationship analysis (cached for reuse; click re-analyze to refresh)
+2. Search/multi-select tables (aliases help Chinese search)
+3. Review schema/relationship analysis; edit glossary aliases; re-analyze if needed
 4. In the workbench:
-   - **Query**: natural language → SQL → result table. Generated SELECT can be edited and executed again (still SELECT-only).
-   - **Write**: natural language → mutation preview → confirm execute
+   - **Query**: natural language → SQL → result table (edit SQL / export CSV / follow-ups)
+   - **Write**: natural language → mutation preview → confirm (large updates need ack; then read-back)
+5. Open **审计** in the top bar to inspect recent SQL and impact
 
 ## Safety model
 
@@ -103,8 +111,9 @@ UI-configured keys override `.env` and are encrypted in `workbench.db`.
 |-------|----------|
 | Read | SELECT only; whitelist tables/columns; enforce max rows |
 | Samples | Tiny `LIMIT` reads of introspected identifiers only; statement timeout; secrets redacted; not stored in analysis cache |
-| Write | No free-form DML; structured mutate only; WHERE required by policy; preview + confirm |
-| Secrets | DB passwords and LLM API keys encrypted at rest in meta DB |
+| Write | No free-form DML; structured mutate only; WHERE required by policy; preview + confirm; large-impact ack |
+| Secrets | DB passwords and LLM API keys encrypted at rest; production blocks insecure `WORKBENCH_SECRET_KEY` |
+| Audit | Actions logged; browsable in the UI |
 
 ## Main APIs
 
@@ -112,11 +121,11 @@ UI-configured keys override `.env` and are encrypted in `workbench.db`.
 |------|----------|
 | Connections | `GET/POST /api/connections`, `POST .../test`, `GET .../schema` |
 | Policy | `GET/PUT /api/connections/{id}/policy` |
-| Workspace | `PUT .../workspace/tables`, `POST .../workspace/interpret`, `GET .../workspace/analysis` |
+| Workspace | `PUT .../workspace/tables`, `POST .../workspace/interpret`, `GET .../workspace/analysis`, `GET/PUT .../workspace/glossary` |
 | Query | `POST .../query/nl`, `.../query/sql`, `.../query/structured` |
 | Mutate | `POST .../mutate/preview`, `.../mutate/nl`, `.../mutate/confirm` |
 | Settings | `GET/PUT /api/settings` |
-| Audit | `GET /api/audit` |
+| Audit | `GET /api/audit`, `GET /api/audit/{id}` |
 
 ## Notes
 
