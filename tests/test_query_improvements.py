@@ -141,3 +141,11 @@ def test_critique_cheap_flags_unfiltered():
     assert out["ok"] is False
     assert "WHERE" in out["reason"] or "整表" in out["reason"]
     assert out["rewrite_hint"]
+
+
+def test_secret_key_guard():
+    from app.config import secret_key_is_insecure
+
+    assert secret_key_is_insecure("dev-only-change-me")
+    assert secret_key_is_insecure("short")
+    assert not secret_key_is_insecure("a-sufficiently-long-random-secret")
