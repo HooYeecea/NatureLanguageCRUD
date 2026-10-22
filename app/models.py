@@ -233,6 +233,11 @@ class MutateConfirmRequest(BaseModel):
     ack_large_impact: bool = False
 
 
+class MutateReviseRequest(BaseModel):
+    preview_id: str
+    sql: str = Field(..., min_length=1)
+
+
 class MutateExecuteResult(BaseModel):
     preview_id: str
     operation: MutationOp

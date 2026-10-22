@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app import audit, meta_db
-from app.db.engines import create_db_engine, test_engine
+from app.db.engines import get_pooled_engine, invalidate_pooled_engine, test_engine
 from app.db.schema import get_engine_cfg, introspect_schema, introspect_table
 from app.models import (
     ConnectionCreate,
@@ -47,10 +47,16 @@ def get_connection(connection_id: str):
 
 @router.put("/{connection_id}", response_model=ConnectionOut)
 def update_connection(connection_id: str, body: ConnectionUpdate):
+    existing = meta_db.get_connection(connection_id, include_password=True)
     payload = body.model_dump(exclude_unset=True)
     updated = meta_db.update_connection(connection_id, payload)
     if not updated:
         raise HTTPException(status_code=404, detail="Connection not found")
+    if existing:
+        invalidate_pooled_engine(get_engine_cfg(existing))
+    refreshed = meta_db.get_connection(connection_id, include_password=True)
+    if refreshed:
+        invalidate_pooled_engine(get_engine_cfg(refreshed))
     logged_fields = [k for k in payload.keys() if k != "password"]
     audit.write_audit(
         action="connection.update",
@@ -64,10 +70,12 @@ def update_connection(connection_id: str, body: ConnectionUpdate):
 
 @router.delete("/{connection_id}", status_code=204)
 def delete_connection(connection_id: str):
-    existing = meta_db.get_connection(connection_id)
+    existing = meta_db.get_connection(connection_id, include_password=True)
     ok = meta_db.delete_connection(connection_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Connection not found")
+    if existing:
+        invalidate_pooled_engine(get_engine_cfg(existing))
     audit.write_audit(
         action="connection.delete",
         status="success",
@@ -83,7 +91,7 @@ def test_connection(connection_id: str):
     data = meta_db.get_connection(connection_id, include_password=True)
     if not data:
         raise HTTPException(status_code=404, detail="Connection not found")
-    engine = create_db_engine(get_engine_cfg(data))
+    engine = get_pooled_engine(get_engine_cfg(data))
     ok, message, version = test_engine(engine)
     audit.write_audit(
         action="connection.test",
@@ -100,13 +108,11 @@ def get_schema(connection_id: str):
     data = meta_db.get_connection(connection_id, include_password=True)
     if not data:
         raise HTTPException(status_code=404, detail="Connection not found")
-    engine = create_db_engine(get_engine_cfg(data))
+    engine = get_pooled_engine(get_engine_cfg(data))
     try:
         return introspect_schema(engine, connection_id, data["dialect"])
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Schema introspection failed: {exc}") from exc
-    finally:
-        engine.dispose()
 
 
 @router.get("/{connection_id}/schema/{table_name}", response_model=TableInfo)
@@ -114,7 +120,7 @@ def get_table_schema(connection_id: str, table_name: str, schema_name: str | Non
     data = meta_db.get_connection(connection_id, include_password=True)
     if not data:
         raise HTTPException(status_code=404, detail="Connection not found")
-    engine = create_db_engine(get_engine_cfg(data))
+    engine = get_pooled_engine(get_engine_cfg(data))
     try:
         table = introspect_table(engine, table_name, schema_name)
         if not table:
@@ -124,5 +130,3 @@ def get_table_schema(connection_id: str, table_name: str, schema_name: str | Non
         raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Schema introspection failed: {exc}") from exc
-    finally:
-        engine.dispose()

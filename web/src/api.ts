@@ -165,6 +165,12 @@ export const api = {
       }),
     }),
 
+  reviseMutate: (id: string, preview_id: string, sql: string) =>
+    request<MutatePreview>(`/api/connections/${id}/mutate/revise`, {
+      method: 'POST',
+      body: JSON.stringify({ preview_id, sql }),
+    }),
+
   listAudit: (params: {
     connection_id?: string
     action?: string

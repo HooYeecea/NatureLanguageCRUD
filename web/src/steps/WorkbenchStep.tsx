@@ -112,14 +112,52 @@ export function WorkbenchStep({
 
   function buildHistory(): ChatTurn[] {
     const turns: ChatTurn[] = []
+    const skipUser = new Set(['执行编辑后的 SQL', '重新预览编辑后的写入 SQL'])
     for (const item of items) {
-      if (item.role === 'user' && item.kind === 'text' && item.text && item.text !== '执行编辑后的 SQL') {
+      if (item.role === 'user' && item.kind === 'text' && item.text && !skipUser.has(item.text)) {
         turns.push({ role: 'user', content: item.text })
       } else if (item.sql) {
         turns.push({ role: 'assistant', content: item.text || '', sql: item.sql })
       }
     }
     return turns.slice(-8)
+  }
+
+  function appendMutatePreview(preview: MutatePreview, sqlLabel: string): ChatItem[] {
+    const next: ChatItem[] = []
+    if (preview.sql) {
+      next.push({
+        role: 'assistant',
+        kind: 'sql',
+        text: sqlLabel,
+        sql: preview.sql,
+        editableSql: !preview.blocked,
+        mutatePreviewId: preview.blocked ? undefined : preview.preview_id,
+      })
+    }
+    if (preview.sample_rows?.length) {
+      next.push({
+        role: 'assistant',
+        kind: 'result',
+        text:
+          preview.operation === 'delete'
+            ? `将删除的样例行（${preview.sample_rows.length}）`
+            : `将影响的样例行（${preview.sample_rows.length}）`,
+        rows: preview.sample_rows,
+        rowCount: preview.sample_rows.length,
+      })
+    }
+    next.push({
+      role: 'assistant',
+      kind: 'text',
+      text: preview.blocked
+        ? `已拦截：${friendlyError(preview.block_reason, '该写入被策略拦截')}`
+        : preview.requires_ack
+          ? `预览 ${preview.operation} → ${preview.table}，影响约 ${preview.affected_count} 行（≥${preview.ack_threshold}，需二次确认）。`
+          : `预览 ${preview.operation} → ${preview.table}，影响约 ${preview.affected_count} 行。请确认后执行。`,
+      preview,
+    })
+    return next
   }
 
   async function onSubmit(e: FormEvent) {
@@ -140,38 +178,7 @@ export function WorkbenchStep({
       } else {
         const preview = await api.nlMutate(connection.id, userText, history)
         setPending(preview.blocked ? null : preview)
-        const next: ChatItem[] = []
-        if (preview.sql) {
-          next.push({
-            role: 'assistant',
-            kind: 'sql',
-            text: '已生成写入 SQL（待确认）',
-            sql: preview.sql,
-          })
-        }
-        if (preview.sample_rows?.length) {
-          next.push({
-            role: 'assistant',
-            kind: 'result',
-            text:
-              preview.operation === 'delete'
-                ? `将删除的样例行（${preview.sample_rows.length}）`
-                : `将影响的样例行（${preview.sample_rows.length}）`,
-            rows: preview.sample_rows,
-            rowCount: preview.sample_rows.length,
-          })
-        }
-        next.push({
-          role: 'assistant',
-          kind: 'text',
-          text: preview.blocked
-            ? `已拦截：${friendlyError(preview.block_reason, '该写入被策略拦截')}`
-            : preview.requires_ack
-              ? `预览 ${preview.operation} → ${preview.table}，影响约 ${preview.affected_count} 行（≥${preview.ack_threshold}，需二次确认）。`
-              : `预览 ${preview.operation} → ${preview.table}，影响约 ${preview.affected_count} 行。请确认后执行。`,
-          preview,
-        })
-        setItems((prev) => [...prev, ...next])
+        setItems((prev) => [...prev, ...appendMutatePreview(preview, '已生成写入 SQL（待确认）')])
       }
     } catch (err) {
       const msg = friendlyError(err)
@@ -197,6 +204,29 @@ export function WorkbenchStep({
     try {
       const result = await api.runSql(connection.id, trimmed)
       setItems((prev) => [...prev, ...appendQueryResult(result, '已执行编辑后的 SQL')])
+    } catch (err) {
+      const msg = friendlyError(err)
+      setError(msg)
+      setItems((prev) => [...prev, { role: 'assistant', kind: 'error', text: msg }])
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function reviseEditedMutate(previewId: string, sql: string) {
+    const trimmed = sql.trim()
+    if (!trimmed) return
+    setBusy(true)
+    setError(null)
+    setAckLarge(false)
+    setItems((prev) => [
+      ...prev,
+      { role: 'user', kind: 'text', text: '重新预览编辑后的写入 SQL' },
+    ])
+    try {
+      const preview = await api.reviseMutate(connection.id, previewId, trimmed)
+      setPending(preview.blocked ? null : preview)
+      setItems((prev) => [...prev, ...appendMutatePreview(preview, '已根据编辑后的 SQL 重新生成预览')])
     } catch (err) {
       const msg = friendlyError(err)
       setError(msg)
@@ -279,7 +309,23 @@ export function WorkbenchStep({
           <article key={idx} className={`bubble ${item.role} ${item.kind || ''}`}>
             <p>{item.text}</p>
             {item.sql && item.editableSql ? (
-              <EditableSql sql={item.sql} disabled={busy} onRun={runEditedSql} />
+              <EditableSql
+                sql={item.sql}
+                disabled={
+                  busy ||
+                  (!!item.mutatePreviewId &&
+                    (!pending || pending.preview_id !== item.mutatePreviewId))
+                }
+                editLabel={item.mutatePreviewId ? '编辑并重新预览' : '编辑并执行'}
+                runLabel={item.mutatePreviewId ? '重新预览' : '执行 SQL'}
+                onRun={(sql) => {
+                  if (item.mutatePreviewId) {
+                    void reviseEditedMutate(item.mutatePreviewId, sql)
+                  } else {
+                    void runEditedSql(sql)
+                  }
+                }}
+              />
             ) : (
               item.sql && (
                 <pre className="sql">
@@ -428,10 +474,14 @@ function EditableSql({
   sql,
   disabled,
   onRun,
+  editLabel = '编辑并执行',
+  runLabel = '执行 SQL',
 }: {
   sql: string
   disabled: boolean
   onRun: (sql: string) => void
+  editLabel?: string
+  runLabel?: string
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(sql)
@@ -476,12 +526,12 @@ function EditableSql({
               disabled={disabled || !draft.trim()}
               onClick={() => onRun(draft)}
             >
-              执行 SQL
+              {runLabel}
             </button>
           </>
         ) : (
           <button type="button" className="btn ghost" disabled={disabled} onClick={() => setEditing(true)}>
-            编辑并执行
+            {editLabel}
           </button>
         )}
       </div>

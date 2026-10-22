@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from app import audit, meta_db, policy_store
 from app.analysis_store import analysis_context_text, get_analysis
-from app.db.engines import create_db_engine
+from app.db.engines import get_pooled_engine
 from app.db.samples import fetch_table_samples, format_samples_text
 from app.db.schema import get_engine_cfg, introspect_schema
 from app.glossary import glossary_context_text
@@ -76,7 +76,7 @@ def _run_guarded(
             validation_note=validation_note,
         )
 
-    engine = create_db_engine(get_engine_cfg(connection))
+    engine = get_pooled_engine(get_engine_cfg(connection))
     try:
         result = execute_select(engine, guarded.sql)
     except Exception as exc:  # noqa: BLE001
@@ -88,8 +88,6 @@ def _run_guarded(
             detail={"sql": guarded.sql, "error": str(exc), "prompt": prompt},
         )
         raise HTTPException(status_code=400, detail=f"Query execution failed: {exc}") from exc
-    finally:
-        engine.dispose()
 
     audit.write_audit(
         action=action,
@@ -190,7 +188,7 @@ def query_natural_language(connection_id: str, body: NlQueryRequest):
     connection = _load_connection(connection_id)
     policy = policy_store.get_policy(connection_id)
 
-    engine = create_db_engine(get_engine_cfg(connection))
+    engine = get_pooled_engine(get_engine_cfg(connection))
     try:
         overview = introspect_schema(engine, connection_id, connection["dialect"])
         schema_tables = [t.model_dump() for t in overview.tables]
@@ -208,8 +206,6 @@ def query_natural_language(connection_id: str, body: NlQueryRequest):
             detail={"error": str(exc), "prompt": body.prompt},
         )
         raise HTTPException(status_code=400, detail=f"Schema introspection failed: {exc}") from exc
-    finally:
-        engine.dispose()
 
     analysis = get_analysis(
         connection_id,

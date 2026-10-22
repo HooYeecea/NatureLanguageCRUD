@@ -119,6 +119,7 @@ def nl_to_mutate_plan(
     sample_context: Optional[str] = None,
     glossary_context: Optional[str] = None,
     history: Optional[list[dict[str, Any]]] = None,
+    primary_keys: Optional[dict[str, list[str]]] = None,
 ) -> tuple[Optional[MutatePlan], Optional[str], Optional[str]]:
     client = _client()
     schema_text = _schema_prompt(policy, schema_tables)
@@ -172,14 +173,17 @@ def nl_to_mutate_plan(
         raise SqlGuardError(f"Unexpected tool: {tool_call.function.name}")
 
     args = json.loads(tool_call.function.arguments or "{}")
+    table_name = args["table"]
+    pk_map = primary_keys or {}
     plan = build_mutate_plan(
         dialect=dialect,
         policy=policy,
         operation=args["operation"],
-        table=args["table"],
+        table=table_name,
         schema_name=args.get("schema_name"),
         values=args.get("values"),
         set_values=args.get("set_values"),
         filters=args.get("filters") or [],
+        primary_key=pk_map.get(table_name),
     )
     return plan, args.get("explanation"), None

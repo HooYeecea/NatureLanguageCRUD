@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import threading
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -14,6 +16,9 @@ DEFAULT_PORTS = {
     "postgresql": 5432,
     "sqlserver": 1433,
 }
+
+_POOL: dict[str, Engine] = {}
+_LOCK = threading.Lock()
 
 
 def build_url(cfg: dict[str, Any]) -> str:
@@ -58,10 +63,61 @@ def create_db_engine(cfg: dict[str, Any], *, echo: bool = False) -> Engine:
     connect_args: dict[str, Any] = {}
     if cfg["dialect"] == "sqlite":
         connect_args["check_same_thread"] = False
-    return create_engine(url, echo=echo, pool_pre_ping=True, connect_args=connect_args)
+    return create_engine(
+        url,
+        echo=echo,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+        connect_args=connect_args,
+    )
 
 
-def test_engine(engine: Engine) -> tuple[bool, str, str | None]:
+def engine_fingerprint(cfg: dict[str, Any]) -> str:
+    options = cfg.get("options") or {}
+    raw = "|".join(
+        [
+            str(cfg.get("dialect") or ""),
+            str(cfg.get("host") or ""),
+            str(cfg.get("port") or ""),
+            str(cfg.get("database") or ""),
+            str(cfg.get("username") or ""),
+            str(cfg.get("password") or ""),
+            str(options.get("path") or ""),
+            str(options.get("driver") or ""),
+        ]
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def get_pooled_engine(cfg: dict[str, Any], *, echo: bool = False) -> Engine:
+    """Reuse engines across requests (do not dispose after each call)."""
+    key = engine_fingerprint(cfg)
+    with _LOCK:
+        engine = _POOL.get(key)
+        if engine is None:
+            engine = create_db_engine(cfg, echo=echo)
+            _POOL[key] = engine
+        return engine
+
+
+def invalidate_pooled_engine(cfg: dict[str, Any]) -> None:
+    key = engine_fingerprint(cfg)
+    with _LOCK:
+        engine = _POOL.pop(key, None)
+    if engine is not None:
+        engine.dispose()
+
+
+def dispose_all_pooled_engines() -> None:
+    with _LOCK:
+        engines = list(_POOL.values())
+        _POOL.clear()
+    for engine in engines:
+        engine.dispose()
+
+
+def test_engine(engine: Engine, *, dispose: bool = False) -> tuple[bool, str, str | None]:
     try:
         with engine.connect() as conn:
             try:
@@ -91,4 +147,5 @@ def test_engine(engine: Engine) -> tuple[bool, str, str | None]:
     except Exception as exc:  # noqa: BLE001
         return False, str(exc), None
     finally:
-        engine.dispose()
+        if dispose:
+            engine.dispose()

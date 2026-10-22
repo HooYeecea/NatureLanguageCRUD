@@ -18,6 +18,9 @@ Natural-language workbench for relational databases. Connect your DB, pick table
 - **Cheap answer check**: heuristics first; rewrite once when a named-entity query looks like a table dump; edit SQL and re-run through the guard
 - **Multi-turn chat**: follow-ups reuse recent questions/SQL
 - **Restricted write**: structured insert/update/delete → preview → confirm; large impact needs a second ack; confirm returns read-back rows
+- **PK-safe mutate**: update/delete refused when the target table has no primary key
+- **Editable mutate SQL**: revise preview SQL through the same structured guard (`.../mutate/revise`) before confirm
+- **Pooled engines**: reuse SQLAlchemy engines across requests; invalidate on connection update/delete
 - **CSV export**: download query results; LIMIT truncation is called out in the UI
 - **Workspace restore**: wizard + chat survive refresh via `sessionStorage`
 - **Schema analysis cache**: reuse relationship interpretation; optional re-analyze with LLM
@@ -111,7 +114,7 @@ LLM_MODEL=deepseek-chat
 |-------|----------|
 | Read | SELECT only; whitelist tables/columns; enforce max rows |
 | Samples | Tiny `LIMIT` reads of introspected identifiers only; statement timeout; secrets redacted; not stored in analysis cache |
-| Write | No free-form DML; structured mutate only; WHERE required by policy; preview + confirm; large-impact ack |
+| Write | No free-form DML; structured mutate only; PK required for update/delete; WHERE required by policy; preview (+ optional SQL revise) + confirm; large-impact ack |
 | Secrets | DB passwords and LLM API keys encrypted at rest; production blocks insecure `WORKBENCH_SECRET_KEY` |
 | Audit | Actions logged; browsable in the UI |
 
@@ -123,7 +126,7 @@ LLM_MODEL=deepseek-chat
 | Policy | `GET/PUT /api/connections/{id}/policy` |
 | Workspace | `PUT .../workspace/tables`, `POST .../workspace/interpret`, `GET .../workspace/analysis`, `GET/PUT .../workspace/glossary` |
 | Query | `POST .../query/nl`, `.../query/sql`, `.../query/structured` |
-| Mutate | `POST .../mutate/preview`, `.../mutate/nl`, `.../mutate/confirm` |
+| Mutate | `POST .../mutate/preview`, `.../mutate/nl`, `.../mutate/revise`, `.../mutate/confirm` |
 | Settings | `GET/PUT /api/settings` |
 | Audit | `GET /api/audit`, `GET /api/audit/{id}` |
 

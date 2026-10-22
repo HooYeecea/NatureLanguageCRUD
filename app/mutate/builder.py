@@ -133,6 +133,21 @@ def _assert_filter_columns(
             raise SqlGuardError(f"Filter column not in whitelist: {col}")
 
 
+def _assert_primary_key_for_write(
+    operation: MutationOp,
+    primary_key: Optional[list[str]],
+) -> None:
+    """Refuse update/delete on tables without a reliable primary key."""
+    if operation not in ("update", "delete"):
+        return
+    if primary_key:
+        return
+    raise SqlGuardError(
+        "UPDATE/DELETE requires a table primary key; this table has none. "
+        "Add a primary key before bulk writes, or use a single-row insert instead."
+    )
+
+
 def build_mutate_plan(
     *,
     dialect: str,
@@ -144,9 +159,11 @@ def build_mutate_plan(
     set_values: Optional[dict[str, Any]] = None,
     filters: Optional[list[dict[str, Any]]] = None,
     preview_limit: int = 20,
+    primary_key: Optional[list[str]] = None,
 ) -> MutatePlan:
     filters = filters or []
     read_dialect = _dialect(dialect)
+    _assert_primary_key_for_write(operation, primary_key)
 
     if operation == "insert":
         if not values:

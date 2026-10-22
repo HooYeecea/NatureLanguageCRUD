@@ -4,7 +4,8 @@ from fastapi import APIRouter, HTTPException
 
 from app import audit, meta_db, policy_store
 from app.analysis_store import analysis_context_text, get_analysis
-from app.db.engines import create_db_engine
+from app.db.engines import get_pooled_engine
+from app.db.pool_helpers import primary_key_map, table_primary_key
 from app.db.samples import fetch_table_samples, format_samples_text
 from app.db.schema import get_engine_cfg, introspect_schema
 from app.models import (
@@ -12,6 +13,7 @@ from app.models import (
     MutateExecuteResult,
     MutatePreviewResult,
     MutateRequest,
+    MutateReviseRequest,
     NlMutateRequest,
 )
 from app.mutate import (
@@ -23,6 +25,7 @@ from app.mutate import (
     mark_cancelled,
     mark_executed,
     nl_to_mutate_plan,
+    parse_mutate_sql,
     preview_plan,
     readback_rows,
 )
@@ -57,7 +60,7 @@ def _preview_from_plan(
     prompt: str | None = None,
 ) -> MutatePreviewResult:
     max_rows = int(policy.get("max_rows_per_mutation") or 100)
-    engine = create_db_engine(get_engine_cfg(connection))
+    engine = get_pooled_engine(get_engine_cfg(connection))
     try:
         stats = preview_plan(engine, plan, max_rows=max_rows)
     except Exception as exc:  # noqa: BLE001
@@ -69,8 +72,6 @@ def _preview_from_plan(
             detail={"error": str(exc), "operation": plan.operation, "table": plan.table, "prompt": prompt},
         )
         raise HTTPException(status_code=400, detail=f"Preview failed: {exc}") from exc
-    finally:
-        engine.dispose()
 
     ack_threshold = int(policy.get("confirm_rows_threshold") or 10)
     requires_ack = (
@@ -131,6 +132,8 @@ def _preview_from_plan(
 def mutate_preview(connection_id: str, body: MutateRequest):
     connection = _load_connection(connection_id)
     policy = policy_store.get_policy(connection_id)
+    engine = get_pooled_engine(get_engine_cfg(connection))
+    pk = table_primary_key(engine, body.table, body.schema_name)
     try:
         plan = build_mutate_plan(
             dialect=connection["dialect"],
@@ -141,6 +144,7 @@ def mutate_preview(connection_id: str, body: MutateRequest):
             values=body.values,
             set_values=body.set_values,
             filters=[f.model_dump() for f in body.filters],
+            primary_key=pk,
         )
     except SqlGuardError as exc:
         audit.write_audit(
@@ -159,12 +163,13 @@ def mutate_nl(connection_id: str, body: NlMutateRequest):
     connection = _load_connection(connection_id)
     policy = policy_store.get_policy(connection_id)
 
-    engine = create_db_engine(get_engine_cfg(connection))
+    engine = get_pooled_engine(get_engine_cfg(connection))
     try:
         overview = introspect_schema(engine, connection_id, connection["dialect"])
         schema_tables = [t.model_dump() for t in overview.tables]
         samples = fetch_table_samples(engine, connection["dialect"], schema_tables, policy)
         sample_ctx = format_samples_text(samples)
+        pk_map = primary_key_map(engine, schema_tables)
     except Exception as exc:  # noqa: BLE001
         audit.write_audit(
             action="mutate.nl",
@@ -174,8 +179,6 @@ def mutate_nl(connection_id: str, body: NlMutateRequest):
             detail={"error": str(exc), "prompt": body.prompt},
         )
         raise HTTPException(status_code=400, detail=f"Schema introspection failed: {exc}") from exc
-    finally:
-        engine.dispose()
 
     try:
         plan, explanation, reply = nl_to_mutate_plan(
@@ -195,6 +198,7 @@ def mutate_nl(connection_id: str, body: NlMutateRequest):
             sample_context=sample_ctx,
             glossary_context=glossary_context_text(get_glossary(connection_id)),
             history=[t.model_dump() for t in (body.history or [])],
+            primary_keys=pk_map,
         )
     except LlmNotConfigured as exc:
         audit.write_audit(
@@ -252,6 +256,56 @@ def mutate_nl(connection_id: str, body: NlMutateRequest):
     )
 
 
+@router.post("/{connection_id}/mutate/revise", response_model=MutatePreviewResult)
+def mutate_revise(connection_id: str, body: MutateReviseRequest):
+    """Re-parse edited mutate SQL into a new guarded preview (cancels the old pending)."""
+    connection = _load_connection(connection_id)
+    policy = policy_store.get_policy(connection_id)
+    pending = get_pending(body.preview_id)
+    if not pending or pending["connection_id"] != connection_id:
+        raise HTTPException(status_code=404, detail="Preview not found")
+    if pending["status"] != "pending":
+        raise HTTPException(status_code=400, detail=f"Preview status is {pending['status']}")
+    if is_expired(pending):
+        mark_cancelled(pending["id"])
+        raise HTTPException(status_code=400, detail="Preview expired; request a new preview")
+
+    try:
+        parsed = parse_mutate_sql(body.sql, dialect=connection["dialect"])
+        engine = get_pooled_engine(get_engine_cfg(connection))
+        pk = table_primary_key(engine, parsed["table"], parsed.get("schema_name"))
+        plan = build_mutate_plan(
+            dialect=connection["dialect"],
+            policy=policy,
+            operation=parsed["operation"],
+            table=parsed["table"],
+            schema_name=parsed.get("schema_name"),
+            values=parsed.get("values"),
+            set_values=parsed.get("set_values"),
+            filters=parsed.get("filters") or [],
+            primary_key=pk,
+        )
+    except SqlGuardError as exc:
+        audit.write_audit(
+            action="mutate.revise",
+            status="error",
+            connection_id=connection_id,
+            summary=exc.message,
+            detail={"preview_id": body.preview_id, "sql": body.sql},
+        )
+        raise http_guard_error(exc) from exc
+
+    mark_cancelled(pending["id"])
+    return _preview_from_plan(
+        connection_id,
+        connection,
+        policy,
+        plan,
+        action="mutate.revise",
+        explanation="已根据编辑后的 SQL 重新生成预览",
+    )
+
+
 @router.post("/{connection_id}/mutate/confirm", response_model=MutateExecuteResult)
 def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
     connection = _load_connection(connection_id)
@@ -287,7 +341,9 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
             },
         )
 
+    engine = get_pooled_engine(get_engine_cfg(connection))
     try:
+        pk = table_primary_key(engine, plan_data["table"], plan_data.get("schema_name"))
         plan = build_mutate_plan(
             dialect=connection["dialect"],
             policy=policy,
@@ -297,6 +353,7 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
             values=plan_data.get("values"),
             set_values=plan_data.get("set_values"),
             filters=plan_data.get("filters") or [],
+            primary_key=pk,
         )
     except SqlGuardError as exc:
         mark_cancelled(pending["id"])
@@ -310,7 +367,6 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
         raise http_guard_error(exc) from exc
 
     max_rows = int(policy.get("max_rows_per_mutation") or 100)
-    engine = create_db_engine(get_engine_cfg(connection))
     try:
         stats = preview_plan(engine, plan, max_rows=max_rows)
         if stats["blocked"]:
@@ -359,8 +415,6 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
             detail={"preview_id": body.preview_id, "sql": plan.sql, "error": str(exc)},
         )
         raise HTTPException(status_code=400, detail=f"Mutation failed: {exc}") from exc
-    finally:
-        engine.dispose()
 
     mark_executed(pending["id"])
     columns = list(changed[0].keys()) if changed else []

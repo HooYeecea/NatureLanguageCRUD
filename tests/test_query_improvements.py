@@ -149,3 +149,83 @@ def test_secret_key_guard():
     assert secret_key_is_insecure("dev-only-change-me")
     assert secret_key_is_insecure("short")
     assert not secret_key_is_insecure("a-sufficiently-long-random-secret")
+
+
+def test_reject_update_without_primary_key():
+    from app.mutate.builder import build_mutate_plan
+    from app.query import SqlGuardError
+
+    policy = {
+        "connection_id": "c1",
+        "tables": [
+            {
+                "table": "events",
+                "schema_name": None,
+                "allow_select": True,
+                "allow_insert": True,
+                "allow_update": True,
+                "allow_delete": True,
+                "allowed_columns": None,
+                "denied_columns": [],
+            }
+        ],
+        "require_where_for_update": True,
+        "require_where_for_delete": True,
+        "max_rows_per_mutation": 100,
+    }
+    try:
+        build_mutate_plan(
+            dialect="sqlite",
+            policy=policy,
+            operation="update",
+            table="events",
+            set_values={"status": "done"},
+            filters=[{"column": "id", "op": "=", "value": 1}],
+            primary_key=[],
+        )
+        assert False, "expected SqlGuardError"
+    except SqlGuardError as exc:
+        assert "primary key" in str(exc).lower()
+
+
+def test_parse_mutate_sql_update():
+    from app.mutate.sql_parse import parse_mutate_sql
+
+    parsed = parse_mutate_sql(
+        "UPDATE tasks SET status = 'done' WHERE id = 3",
+        dialect="sqlite",
+    )
+    assert parsed["operation"] == "update"
+    assert parsed["table"] == "tasks"
+    assert parsed["set_values"] == {"status": "done"}
+    assert parsed["filters"] == [{"column": "id", "op": "=", "value": 3}]
+
+
+def test_parse_mutate_sql_insert():
+    from app.mutate.sql_parse import parse_mutate_sql
+
+    parsed = parse_mutate_sql(
+        "INSERT INTO tasks (title, priority) VALUES ('fix timeout', 1)",
+        dialect="sqlite",
+    )
+    assert parsed["operation"] == "insert"
+    assert parsed["values"] == {"title": "fix timeout", "priority": 1}
+
+
+def test_engine_pool_reuses_same_fingerprint():
+    from app.db.engines import dispose_all_pooled_engines, get_pooled_engine
+
+    dispose_all_pooled_engines()
+    cfg = {
+        "dialect": "sqlite",
+        "host": None,
+        "port": None,
+        "database": ":memory:",
+        "username": None,
+        "password": None,
+        "options": {"path": ":memory:pk-pool-test"},
+    }
+    a = get_pooled_engine(cfg)
+    b = get_pooled_engine(cfg)
+    assert a is b
+    dispose_all_pooled_engines()

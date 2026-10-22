@@ -10,6 +10,8 @@ export type PersistedChatItem = {
   text: string
   sql?: string
   editableSql?: boolean
+  /** When set, editing SQL revises this mutate preview instead of running SELECT */
+  mutatePreviewId?: string
   rows?: Record<string, unknown>[]
   rowCount?: number
   validationOk?: boolean | null

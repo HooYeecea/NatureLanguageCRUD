@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 from app import audit, meta_db, policy_store
 from app.analysis_store import get_analysis, save_analysis
-from app.db.engines import create_db_engine
+from app.db.engines import get_pooled_engine
 from app.db.samples import fetch_table_samples
 from app.db.schema import get_engine_cfg, introspect_schema
 from app.glossary import merge_glossary, suggest_glossary
@@ -175,7 +175,7 @@ def interpret_selected_tables(connection_id: str, body: InterpretRequest):
                 updated_at=cached["updated_at"].isoformat() if cached.get("updated_at") else None,
             )
 
-    engine = create_db_engine(get_engine_cfg(data))
+    engine = get_pooled_engine(get_engine_cfg(data))
     samples: dict = {}
     try:
         overview = introspect_schema(engine, connection_id, data["dialect"])
@@ -197,8 +197,6 @@ def interpret_selected_tables(connection_id: str, body: InterpretRequest):
         raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Schema introspection failed: {exc}") from exc
-    finally:
-        engine.dispose()
 
     try:
         result = interpret_schema(

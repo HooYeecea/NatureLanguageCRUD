@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from app import audit, meta_db
 from app import policy as policy_guard
 from app import policy_store
-from app.db.engines import create_db_engine
+from app.db.engines import get_pooled_engine
 from app.db.schema import get_engine_cfg, introspect_schema
 from app.models import (
     AccessPolicyOut,
@@ -73,13 +73,11 @@ def allow_all_tables(
     if not data:
         raise HTTPException(status_code=404, detail="Connection not found")
 
-    engine = create_db_engine(get_engine_cfg(data))
+    engine = get_pooled_engine(get_engine_cfg(data))
     try:
         overview = introspect_schema(engine, connection_id, data["dialect"])
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Schema introspection failed: {exc}") from exc
-    finally:
-        engine.dispose()
 
     tables = [
         TablePolicy(

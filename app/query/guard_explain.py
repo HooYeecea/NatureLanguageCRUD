@@ -51,6 +51,16 @@ def explain_guard(message: str) -> dict[str, str]:
             "按安全策略，更新/删除必须带条件。",
             "请说明要改哪一条，例如按主键、名称或状态过滤。",
         )
+    if "primary key" in lower or "主键" in text:
+        return pack(
+            "该表没有主键，不允许 update/delete。",
+            "请先为表添加主键，或改用带明确主键条件的写入；插入不受此限制。",
+        )
+    if "editing mutate sql" in lower or "when editing mutate" in lower:
+        return pack(
+            "编辑后的写入 SQL 暂不支持这种写法。",
+            "请使用简单的 INSERT/UPDATE/DELETE，WHERE 仅用列与字面量的 AND 组合。",
+        )
     if "insert requires values" in lower:
         return pack("新增缺少字段值。", "请说明要写入哪些列以及对应的值。")
     if "update requires set_values" in lower or "set_values" in lower:
