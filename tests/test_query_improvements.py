@@ -229,3 +229,80 @@ def test_engine_pool_reuses_same_fingerprint():
     b = get_pooled_engine(cfg)
     assert a is b
     dispose_all_pooled_engines()
+
+
+def test_redact_secret_columns_and_heuristics():
+    from app.db.redact import REDACTED, redact_rows
+
+    rows = redact_rows(
+        [{"email": "a@b.com", "password_hash": "x", "api_token": "t", "name": "n"}],
+        secret_columns={"email"},
+    )
+    assert rows[0]["email"] == REDACTED
+    assert rows[0]["password_hash"] == REDACTED
+    assert rows[0]["api_token"] == REDACTED
+    assert rows[0]["name"] == "n"
+
+
+def test_claim_pending_is_single_use(tmp_path, monkeypatch):
+    import app.meta_db as meta_db
+    from app.mutate.pending import claim_pending, create_pending, get_pending
+
+    monkeypatch.setattr(meta_db, "META_DB_PATH", tmp_path / "claim-meta.db")
+    meta_db.init_meta_db()
+    created = meta_db.create_connection(
+        {
+            "name": "claim-test",
+            "dialect": "sqlite",
+            "database": str(tmp_path / "x.db"),
+            "options": {"path": str(tmp_path / "x.db")},
+        }
+    )
+    conn_id = created["id"]
+    pending = create_pending(conn_id, {"operation": "update", "table": "t"})
+    first, err1 = claim_pending(pending["id"], connection_id=conn_id)
+    assert err1 == "" and first is not None
+    assert first["status"] == "executing"
+    second, err2 = claim_pending(pending["id"], connection_id=conn_id)
+    assert second is None and err2 == "busy"
+    assert get_pending(pending["id"])["status"] == "executing"
+
+
+def test_preview_plan_rolls_back_dry_run(tmp_path):
+    from sqlalchemy import create_engine, text
+
+    from app.mutate.builder import MutatePlan
+    from app.mutate.executor import preview_plan
+
+    db = tmp_path / "preview.db"
+    engine = create_engine(f"sqlite:///{db}")
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE items (id INTEGER PRIMARY KEY, status TEXT)"))
+        conn.execute(text("INSERT INTO items (id, status) VALUES (1, 'open')"))
+
+    plan = MutatePlan(
+        operation="update",
+        table="items",
+        schema_name=None,
+        sql="UPDATE items SET status = 'closed' WHERE id = 1",
+        count_sql="SELECT COUNT(*) FROM items WHERE id = 1",
+        preview_sql="SELECT * FROM items WHERE id = 1",
+        filters=[{"column": "id", "op": "=", "value": 1}],
+        set_values={"status": "closed"},
+    )
+    stats = preview_plan(engine, plan, max_rows=100)
+    assert stats["blocked"] is False
+    assert stats["affected_count"] == 1
+    assert stats["sample_rows"][0]["status"] == "open"
+
+    with engine.connect() as conn:
+        status = conn.execute(text("SELECT status FROM items WHERE id = 1")).scalar()
+    assert status == "open"
+
+
+def test_auth_keys_match():
+    from app.auth import keys_match
+
+    assert keys_match("same-key-value", "same-key-value")
+    assert not keys_match("a", "b")
+    assert not keys_match("", "x")
