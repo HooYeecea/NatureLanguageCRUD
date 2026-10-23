@@ -53,6 +53,18 @@ export function friendlyError(raw: unknown, fallback = '操作失败，请稍后
     return '找不到该预览记录，可能已执行或已取消。'
   }
 
+  if (
+    lower.includes('invalid or missing api key') ||
+    lower.includes('workbench_api_key') ||
+    (lower.includes('api key') && lower.includes('missing'))
+  ) {
+    return '需要工作台 API Key：请在右上角「API 设置」中填写与后端 WORKBENCH_API_KEY 相同的密钥。'
+  }
+
+  if (lower.includes('already being confirmed') || lower.includes('preview is already')) {
+    return '该预览正在确认中，请勿重复点击。'
+  }
+
   if (lower.includes('multiple sql') || lower.includes('only select')) {
     return '当前仅允许单条只读查询，请换一种问法。'
   }

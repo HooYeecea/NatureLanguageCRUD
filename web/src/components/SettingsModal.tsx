@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { api } from '../api'
+import { api, getWorkbenchApiKey, setWorkbenchApiKey } from '../api'
 import { friendlyError } from '../errors'
 import type { Settings } from '../types'
 import { RoundedSelect } from './RoundedSelect'
@@ -38,6 +38,8 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
   const [saving, setSaving] = useState(false)
   const [settings, setSettings] = useState<Settings | null>(null)
   const [apiKey, setApiKey] = useState('')
+  const [workbenchKey, setWorkbenchKey] = useState('')
+  const [authRequired, setAuthRequired] = useState(false)
   const [baseUrl, setBaseUrl] = useState('https://api.deepseek.com')
   const [model, setModel] = useState('deepseek-chat')
   const [baseUrlPreset, setBaseUrlPreset] = useState('https://api.deepseek.com')
@@ -58,9 +60,10 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
     setError(null)
     setOk(null)
     setApiKey('')
-    api
-      .settings()
-      .then((s) => {
+    setWorkbenchKey(getWorkbenchApiKey())
+    Promise.all([api.authStatus(), api.settings()])
+      .then(([auth, s]) => {
+        setAuthRequired(!!auth.required)
         setSettings(s)
         const url = s.llm_base_url || 'https://api.deepseek.com'
         const mdl = s.llm_model || 'deepseek-chat'
@@ -73,7 +76,15 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
           MODEL_PRESETS.some((p) => p.value === mdl) ? mdl : CUSTOM,
         )
       })
-      .catch((e) => setError(friendlyError(e)))
+      .catch(async (e) => {
+        try {
+          const auth = await api.authStatus()
+          setAuthRequired(!!auth.required)
+        } catch {
+          /* ignore */
+        }
+        setError(friendlyError(e))
+      })
       .finally(() => setLoading(false))
   }, [open])
 
@@ -145,6 +156,7 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
     setError(null)
     setOk(null)
     try {
+      setWorkbenchApiKey(workbenchKey)
       const saved = await api.updateSettings({
         api_key: apiKey.trim() || undefined,
         base_url: baseUrl.trim(),
@@ -152,7 +164,11 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
       })
       setSettings(saved)
       setApiKey('')
-      setOk('已保存。API Key 仅加密存储，不会明文回显。')
+      setOk(
+        authRequired
+          ? '已保存。工作台 API Key 存于本机浏览器；大模型 Key 由后端加密存储。'
+          : '已保存。API Key 仅加密存储，不会明文回显。',
+      )
       onSaved?.(saved)
     } catch (err) {
       setError(friendlyError(err))
@@ -197,7 +213,7 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
 
         <header className="modal-header">
           <h2 id="settings-title">API 设置</h2>
-          <p className="muted">配置大模型 API，用于表关系解读与自然语言查写。</p>
+          <p className="muted">配置工作台访问密钥与大模型 API。</p>
         </header>
 
         <div className="modal-body">
@@ -205,9 +221,29 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
             <p className="muted">加载中…</p>
           ) : (
             <form className="form" onSubmit={onSubmit}>
+              <label>
+                工作台 API Key
+                <input
+                  type="password"
+                  value={workbenchKey}
+                  onChange={(e) => setWorkbenchKey(e.target.value)}
+                  placeholder={
+                    authRequired
+                      ? '与后端 .env 中 WORKBENCH_API_KEY 一致'
+                      : '后端未启用时可不填'
+                  }
+                  autoComplete="off"
+                />
+              </label>
+              <p className="muted small">
+                {authRequired
+                  ? '后端已启用 API Key 校验，未填写将无法调用接口。密钥仅保存在本机浏览器。'
+                  : '当前后端未设置 WORKBENCH_API_KEY，此项可选。'}
+              </p>
+
               <div className="settings-status">
                 <span className={`badge ${settings?.llm_configured ? 'ok' : ''}`}>
-                  {settings?.llm_configured ? '已配置' : '未配置'}
+                  {settings?.llm_configured ? '大模型已配置' : '大模型未配置'}
                 </span>
                 {settings?.api_key_masked && (
                   <span className="muted small">当前 Key：{settings.api_key_masked}</span>
@@ -218,7 +254,7 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
               </div>
 
               <label>
-                API Key
+                大模型 API Key
                 <input
                   type="password"
                   value={apiKey}

@@ -128,6 +128,10 @@ export type Settings = {
   source?: string | null
 }
 
+export type AuthStatus = {
+  required: boolean
+}
+
 export type AuditLog = {
   id: string
   connection_id?: string | null

@@ -6,7 +6,7 @@ import { ConnectStep } from './steps/ConnectStep'
 import { InterpretStep } from './steps/InterpretStep'
 import { SelectTablesStep } from './steps/SelectTablesStep'
 import { WorkbenchStep } from './steps/WorkbenchStep'
-import { api } from './api'
+import { api, getWorkbenchApiKey } from './api'
 import {
   clearWorkspaceSession,
   loadWorkspaceSession,
@@ -42,7 +42,16 @@ export default function App() {
   const [hydrated, setHydrated] = useState(false)
 
   useEffect(() => {
-    api.settings().then(setSettings).catch(() => setSettings(null))
+    api
+      .authStatus()
+      .then((auth) => {
+        if (auth.required && !getWorkbenchApiKey()) setSettingsOpen(true)
+      })
+      .catch(() => undefined)
+    api.settings().then(setSettings).catch(() => {
+      setSettings(null)
+      setSettingsOpen(true)
+    })
     api
       .listConnections()
       .then((list) => {
@@ -62,7 +71,9 @@ export default function App() {
           }
         }
       })
-      .catch(() => undefined)
+      .catch(() => {
+        setSettingsOpen(true)
+      })
       .finally(() => setHydrated(true))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

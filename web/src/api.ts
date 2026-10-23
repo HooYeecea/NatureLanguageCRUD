@@ -1,5 +1,6 @@
 import type {
   AuditLog,
+  AuthStatus,
   ChatTurn,
   Connection,
   Dialect,
@@ -13,10 +14,35 @@ import type {
 } from './types'
 import { friendlyError } from './errors'
 
+const WORKBENCH_API_KEY_STORAGE = 'nlcrud.workbenchApiKey'
+
+export function getWorkbenchApiKey(): string {
+  try {
+    return localStorage.getItem(WORKBENCH_API_KEY_STORAGE) || ''
+  } catch {
+    return ''
+  }
+}
+
+export function setWorkbenchApiKey(key: string): void {
+  try {
+    const trimmed = key.trim()
+    if (trimmed) localStorage.setItem(WORKBENCH_API_KEY_STORAGE, trimmed)
+    else localStorage.removeItem(WORKBENCH_API_KEY_STORAGE)
+  } catch {
+    /* private mode */
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const workbenchKey = getWorkbenchApiKey()
   const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
     ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(workbenchKey ? { 'X-API-Key': workbenchKey } : {}),
+      ...(init?.headers || {}),
+    },
   })
   if (!res.ok) {
     let detail: unknown = res.statusText
@@ -26,6 +52,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       /* ignore */
     }
+    if (res.status === 401) {
+      throw new Error(friendlyError(detail, '需要工作台 API Key，请在设置中填写 WORKBENCH_API_KEY。'))
+    }
     throw new Error(friendlyError(detail))
   }
   if (res.status === 204) return undefined as T
@@ -33,6 +62,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  authStatus: () => request<AuthStatus>('/api/auth/status'),
+
   settings: () => request<Settings>('/api/settings'),
 
   updateSettings: (body: {
