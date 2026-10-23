@@ -21,6 +21,10 @@ Natural-language workbench for relational databases. Connect your DB, pick table
 - **PK-safe mutate**: update/delete refused when the target table has no primary key
 - **Editable mutate SQL**: revise preview SQL through the same structured guard (`.../mutate/revise`) before confirm
 - **Pooled engines**: reuse SQLAlchemy engines across requests; invalidate on connection update/delete
+- **Transactional mutate preview**: update/delete dry-run inside a rolled-back transaction
+- **Atomic confirm**: preview_id claims `pending → executing` once (no double confirm)
+- **Secret columns**: policy `secret_columns` + name heuristics redact samples, query rows, and mutate read-back
+- **Optional API key**: set `WORKBENCH_API_KEY` (required in production); UI sends `X-API-Key`
 - **CSV export**: download query results; LIMIT truncation is called out in the UI
 - **Workspace restore**: wizard + chat survive refresh via `sessionStorage`
 - **Schema analysis cache**: reuse relationship interpretation; optional re-analyze with LLM

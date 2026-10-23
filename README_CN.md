@@ -18,7 +18,15 @@
 - **低成本结果校验**：优先启发式；点名对象却整表倒出时自动改写一次；也可编辑 SQL 再执行
 - **多轮对话**：追问会复用近期问题与 SQL
 - **受限写入**：结构化 insert/update/delete → 预览 → 确认；大批量需二次勾选；执行后回读变更行
+- **无主键拒写**：目标表无主键时拒绝 update/delete
+- **可编辑写入 SQL**：确认前可通过 `mutate/revise` 按结构化守卫重解析
+- **连接池**：跨请求复用引擎；连接变更时失效
+- **事务化预览**：update/delete 在事务内 dry-run 后 rollback，确认前校验 SQL
+- **原子确认**：`preview_id` 仅可 `pending → executing` 一次，防重复点击
+- **敏感列脱敏**：策略 `secret_columns` + 列名启发式，覆盖样例 / 查询结果 / 写入回读
+- **可选 API Key**：设置 `WORKBENCH_API_KEY`（生产环境必填）；前端通过 `X-API-Key` 访问
 - **CSV 导出**：查询结果可下载；打到 `LIMIT` 时明确提示已截断
+
 - **工作区恢复**：向导与聊天刷新后尽量保留（`sessionStorage`）
 - **表关系分析缓存**：相同选表可复用；支持重新用大模型分析
 - **API 设置界面**：API Key / Base URL / Model（预设 + 自定义），Key 加密存储
