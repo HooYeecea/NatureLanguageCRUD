@@ -11,6 +11,8 @@ DEMO_DB_PATH = ROOT_DIR / "demo.db"
 
 WORKBENCH_ENV = (os.getenv("WORKBENCH_ENV") or "development").strip().lower()
 SECRET_KEY = os.getenv("WORKBENCH_SECRET_KEY", "dev-only-change-me")
+# Optional shared gate for /api/* (empty = disabled in development).
+WORKBENCH_API_KEY = (os.getenv("WORKBENCH_API_KEY") or "").strip()
 
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
@@ -52,4 +54,23 @@ def assert_secret_key_safe() -> None:
             "Unsafe WORKBENCH_SECRET_KEY in production. "
             "Set WORKBENCH_SECRET_KEY to a long random string (≥16 chars) in .env, "
             "or set WORKBENCH_ENV=development for local use only."
+        )
+
+
+def api_key_required() -> bool:
+    return bool(WORKBENCH_API_KEY)
+
+
+def assert_api_key_configured() -> None:
+    """Production must set WORKBENCH_API_KEY so the API is not open on the LAN."""
+    if not is_production():
+        return
+    if not api_key_required():
+        raise RuntimeError(
+            "WORKBENCH_API_KEY is required in production. "
+            "Set a long random API key in .env, or use WORKBENCH_ENV=development locally."
+        )
+    if len(WORKBENCH_API_KEY) < 16:
+        raise RuntimeError(
+            "WORKBENCH_API_KEY is too short in production (use ≥16 characters)."
         )
