@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from app import audit, meta_db, policy_store
 from app.analysis_store import analysis_context_text, get_analysis
 from app.db.engines import get_pooled_engine
+from app.db.redact import redact_rows, secret_columns_for_tables
 from app.db.samples import fetch_table_samples, format_samples_text
 from app.db.schema import get_engine_cfg, introspect_schema
 from app.glossary import glossary_context_text
@@ -108,13 +109,15 @@ def _run_guarded(
         and result["row_count"] > 0
         and result["row_count"] >= int(guarded.limit)
     )
+    policy = policy_store.get_policy(connection_id)
+    secrets = secret_columns_for_tables(policy, guarded.tables)
     return QueryResult(
         sql=guarded.sql,
         tables=guarded.tables,
         limit=guarded.limit,
         dry_run=False,
         columns=result["columns"],
-        rows=result["rows"],
+        rows=redact_rows(result["rows"] or [], secret_columns=secrets),
         row_count=result["row_count"],
         explanation=explanation,
         reply=reply,

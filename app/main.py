@@ -13,17 +13,30 @@ from app.api import (
     query_router,
     workspace_router,
 )
-from app.config import DEMO_DB_PATH, assert_secret_key_safe, is_production, secret_key_is_insecure
+from app.auth import ApiKeyMiddleware, ensure_auth_ready
+from app.config import (
+    DEMO_DB_PATH,
+    api_key_required,
+    assert_secret_key_safe,
+    is_production,
+    secret_key_is_insecure,
+)
 from app.demo_seed import ensure_demo_db
 
 
 def bootstrap() -> None:
     assert_secret_key_safe()
+    ensure_auth_ready()
     if not is_production() and secret_key_is_insecure():
         print(
             "[warn] WORKBENCH_SECRET_KEY is insecure/default. "
             "Fine for local development; set a long random key before production "
             "(WORKBENCH_ENV=production will refuse to start)."
+        )
+    if not is_production() and not api_key_required():
+        print(
+            "[warn] WORKBENCH_API_KEY is empty — API is open without a key. "
+            "Set WORKBENCH_API_KEY before exposing this service on a network."
         )
     meta_db.init_meta_db()
     ensure_demo_db()
@@ -54,6 +67,7 @@ def bootstrap() -> None:
                         "schema_name": None,
                         "allowed_columns": None,
                         "denied_columns": [],
+                        "secret_columns": [],
                         "allow_select": True,
                         "allow_insert": True,
                         "allow_update": True,
@@ -64,6 +78,7 @@ def bootstrap() -> None:
                         "schema_name": None,
                         "allowed_columns": None,
                         "denied_columns": [],
+                        "secret_columns": [],
                         "allow_select": True,
                         "allow_insert": True,
                         "allow_update": True,
@@ -97,11 +112,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(ApiKeyMiddleware)
 
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/auth/status")
+def auth_status():
+    """Public: whether the UI must send X-API-Key."""
+    return {"required": api_key_required()}
 
 
 app.include_router(connections_router)

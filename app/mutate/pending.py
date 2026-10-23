@@ -107,5 +107,82 @@ def mark_cancelled(pending_id: str) -> None:
         )
 
 
+def mark_failed(pending_id: str) -> None:
+    with meta_conn() as conn:
+        ensure_pending_table(conn)
+        conn.execute(
+            """
+            UPDATE pending_mutations
+            SET status = 'failed'
+            WHERE id = ? AND status = 'executing'
+            """,
+            (pending_id,),
+        )
+
+
+def release_claim(pending_id: str) -> None:
+    """Return executing → pending (e.g. soft validation failure before write)."""
+    with meta_conn() as conn:
+        ensure_pending_table(conn)
+        conn.execute(
+            """
+            UPDATE pending_mutations
+            SET status = 'pending'
+            WHERE id = ? AND status = 'executing'
+            """,
+            (pending_id,),
+        )
+
+
+def claim_pending(
+    pending_id: str,
+    *,
+    connection_id: Optional[str] = None,
+) -> tuple[Optional[dict[str, Any]], str]:
+    """
+    Atomically move pending → executing.
+
+    Returns (pending_dict, error) where error is '' on success, else one of:
+    not_found | wrong_connection | not_pending | expired | busy
+    """
+    now = _utcnow()
+    with meta_conn() as conn:
+        ensure_pending_table(conn)
+        row = conn.execute(
+            "SELECT * FROM pending_mutations WHERE id = ?",
+            (pending_id,),
+        ).fetchone()
+        if not row:
+            return None, "not_found"
+        if connection_id is not None and row["connection_id"] != connection_id:
+            return None, "wrong_connection"
+        if row["status"] == "executing":
+            return None, "busy"
+        if row["status"] != "pending":
+            return None, "not_pending"
+        expires_at = datetime.fromisoformat(row["expires_at"])
+        if now >= expires_at:
+            conn.execute(
+                """
+                UPDATE pending_mutations
+                SET status = 'cancelled'
+                WHERE id = ? AND status = 'pending'
+                """,
+                (pending_id,),
+            )
+            return None, "expired"
+        cur = conn.execute(
+            """
+            UPDATE pending_mutations
+            SET status = 'executing'
+            WHERE id = ? AND status = 'pending'
+            """,
+            (pending_id,),
+        )
+        if cur.rowcount != 1:
+            return None, "busy"
+    return get_pending(pending_id), ""
+
+
 def is_expired(pending: dict[str, Any]) -> bool:
     return _utcnow() >= pending["expires_at"]

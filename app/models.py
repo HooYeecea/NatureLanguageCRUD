@@ -101,6 +101,8 @@ class TablePolicy(BaseModel):
     # None / omit = all columns except denied_columns
     allowed_columns: Optional[list[str]] = None
     denied_columns: list[str] = Field(default_factory=list)
+    # Values shown as [redacted] in samples / query results / mutate read-back
+    secret_columns: list[str] = Field(default_factory=list)
     allow_select: bool = True
     allow_insert: bool = True
     allow_update: bool = True

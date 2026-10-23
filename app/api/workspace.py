@@ -113,6 +113,10 @@ def select_workspace_tables(connection_id: str, body: SelectTablesRequest):
         raise HTTPException(status_code=400, detail="Select at least one table")
 
     existing = policy_store.get_policy(connection_id)
+    prev_by_key = {
+        (item.get("table"), item.get("schema_name")): item
+        for item in (existing.get("tables") or [])
+    }
     policy_body = AccessPolicyUpsert(
         require_where_for_update=existing.get("require_where_for_update", True),
         require_where_for_delete=existing.get("require_where_for_delete", True),
@@ -123,8 +127,15 @@ def select_workspace_tables(connection_id: str, body: SelectTablesRequest):
             TablePolicy(
                 table=t.table,
                 schema_name=t.schema_name,
-                allowed_columns=None,
-                denied_columns=[],
+                allowed_columns=(prev_by_key.get((t.table, t.schema_name)) or {}).get(
+                    "allowed_columns"
+                ),
+                denied_columns=list(
+                    (prev_by_key.get((t.table, t.schema_name)) or {}).get("denied_columns") or []
+                ),
+                secret_columns=list(
+                    (prev_by_key.get((t.table, t.schema_name)) or {}).get("secret_columns") or []
+                ),
                 allow_select=body.allow_select,
                 allow_insert=body.allow_insert,
                 allow_update=body.allow_update,

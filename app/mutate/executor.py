@@ -26,6 +26,13 @@ def _fetch_dicts(conn, sql: str, limit: int = 50) -> list[dict[str, Any]]:
 
 
 def preview_plan(engine: Engine, plan: MutatePlan, *, max_rows: int) -> dict[str, Any]:
+    """
+    Preview mutation impact.
+
+    For update/delete: run count + sample, then dry-run the DML inside a
+    transaction that always rolls back — so concurrent readers see no change
+    and the SQL is verified before confirm.
+    """
     if plan.operation == "insert":
         return {
             "affected_count": 1,
@@ -35,29 +42,49 @@ def preview_plan(engine: Engine, plan: MutatePlan, *, max_rows: int) -> dict[str
         }
 
     with engine.connect() as conn:
-        count_row = conn.execute(text(plan.count_sql)).fetchone()
-        affected = int(count_row[0]) if count_row is not None else 0
+        trans = conn.begin()
+        try:
+            count_row = conn.execute(text(plan.count_sql)).fetchone()
+            affected = int(count_row[0]) if count_row is not None else 0
 
-        if affected > max_rows:
+            if affected > max_rows:
+                return {
+                    "affected_count": affected,
+                    "sample_rows": [],
+                    "blocked": True,
+                    "block_reason": (
+                        f"Affected rows ({affected}) exceed max_rows_per_mutation ({max_rows})"
+                    ),
+                }
+
+            sample_rows: list[dict[str, Any]] = []
+            if plan.preview_sql and affected > 0:
+                sample_rows = _fetch_dicts(conn, plan.preview_sql)
+
+            # Dry-run write then roll back (same snapshot as count/sample).
+            result = conn.execute(text(plan.sql))
+            live = result.rowcount
+            if live is not None and int(live) >= 0:
+                affected = int(live)
+                if affected > max_rows:
+                    return {
+                        "affected_count": affected,
+                        "sample_rows": [],
+                        "blocked": True,
+                        "block_reason": (
+                            f"Affected rows ({affected}) exceed max_rows_per_mutation ({max_rows})"
+                        ),
+                    }
+
             return {
                 "affected_count": affected,
-                "sample_rows": [],
-                "blocked": True,
-                "block_reason": (
-                    f"Affected rows ({affected}) exceed max_rows_per_mutation ({max_rows})"
-                ),
+                "sample_rows": sample_rows,
+                "blocked": False,
+                "block_reason": None,
             }
-
-        sample_rows: list[dict[str, Any]] = []
-        if plan.preview_sql and affected > 0:
-            sample_rows = _fetch_dicts(conn, plan.preview_sql)
-
-    return {
-        "affected_count": affected,
-        "sample_rows": sample_rows,
-        "blocked": False,
-        "block_reason": None,
-    }
+        finally:
+            if trans.is_active:
+                trans.rollback()
 
 
 def execute_plan(engine: Engine, plan: MutatePlan) -> dict[str, Any]:

@@ -10,10 +10,8 @@ from typing import Any, Optional
 from sqlalchemy import column, inspect, select, table, text
 from sqlalchemy.engine import Connection, Engine
 
-SENSITIVE_COL = re.compile(
-    r"(password|passwd|secret|token|api[_-]?key|private[_-]?key|credential|salt)",
-    re.I,
-)
+from app.db.redact import REDACTED, should_redact_column, secret_columns_for_table
+
 # Introspected identifiers only: no quotes, comments, spaces, or dotted fragments.
 SAFE_IDENT = re.compile(r"^[A-Za-z_\u4e00-\u9fff][A-Za-z0-9_$\u4e00-\u9fff]{0,127}$")
 MAX_CELL = 80
@@ -177,6 +175,7 @@ def fetch_table_samples(
             continue
         tbl = table(name, *[column(c) for c in columns], schema=schema)
         stmt = select(*tbl.c).limit(n)
+        secrets = secret_columns_for_table(policy, name, table_info.get("schema_name"))
         try:
             with engine.connect() as conn:
                 conn = conn.execution_options(timeout=SAMPLE_TIMEOUT_SEC)
@@ -187,8 +186,8 @@ def fetch_table_samples(
                 for raw in result.fetchall():
                     row = {}
                     for k, v in zip(keys, raw):
-                        if SENSITIVE_COL.search(str(k)):
-                            row[k] = "[redacted]"
+                        if should_redact_column(str(k), secrets):
+                            row[k] = REDACTED
                         else:
                             row[k] = _truncate(v)
                     rows.append(row)

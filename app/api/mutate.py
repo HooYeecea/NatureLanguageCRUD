@@ -6,6 +6,7 @@ from app import audit, meta_db, policy_store
 from app.analysis_store import analysis_context_text, get_analysis
 from app.db.engines import get_pooled_engine
 from app.db.pool_helpers import primary_key_map, table_primary_key
+from app.db.redact import redact_rows, secret_columns_for_table
 from app.db.samples import fetch_table_samples, format_samples_text
 from app.db.schema import get_engine_cfg, introspect_schema
 from app.models import (
@@ -18,13 +19,16 @@ from app.models import (
 )
 from app.mutate import (
     build_mutate_plan,
+    claim_pending,
     create_pending,
     execute_plan,
     get_pending,
     is_expired,
     mark_cancelled,
     mark_executed,
+    mark_failed,
     nl_to_mutate_plan,
+    release_claim,
     parse_mutate_sql,
     preview_plan,
     readback_rows,
@@ -110,6 +114,7 @@ def _preview_from_plan(
         },
     )
 
+    secrets = secret_columns_for_table(policy, plan.table, plan.schema_name)
     return MutatePreviewResult(
         preview_id=pending["id"],
         operation=plan.operation,
@@ -117,7 +122,7 @@ def _preview_from_plan(
         schema_name=plan.schema_name,
         sql=plan.sql,
         affected_count=stats["affected_count"],
-        sample_rows=stats["sample_rows"],
+        sample_rows=redact_rows(stats["sample_rows"] or [], secret_columns=secrets),
         blocked=stats["blocked"],
         block_reason=stats["block_reason"],
         requires_ack=requires_ack,
@@ -310,13 +315,13 @@ def mutate_revise(connection_id: str, body: MutateReviseRequest):
 def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
     connection = _load_connection(connection_id)
     policy = policy_store.get_policy(connection_id)
-    pending = get_pending(body.preview_id)
-    if not pending or pending["connection_id"] != connection_id:
+
+    # Peek for ack / expiry messages before claiming the lock.
+    peeked = get_pending(body.preview_id)
+    if not peeked or peeked["connection_id"] != connection_id:
         raise HTTPException(status_code=404, detail="Preview not found")
-    if pending["status"] != "pending":
-        raise HTTPException(status_code=400, detail=f"Preview status is {pending['status']}")
-    if is_expired(pending):
-        mark_cancelled(pending["id"])
+    if is_expired(peeked) and peeked["status"] == "pending":
+        mark_cancelled(peeked["id"])
         audit.write_audit(
             action="mutate.confirm",
             status="error",
@@ -326,7 +331,7 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
         )
         raise HTTPException(status_code=400, detail="Preview expired; request a new preview")
 
-    plan_data = pending["plan"]
+    plan_data = peeked["plan"]
     preview_meta = plan_data.get("_preview_meta") or {}
     requires_ack = bool(preview_meta.get("requires_ack"))
     if requires_ack and not body.ack_large_impact:
@@ -341,7 +346,31 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
             },
         )
 
+    pending, claim_err = claim_pending(body.preview_id, connection_id=connection_id)
+    if claim_err == "not_found" or claim_err == "wrong_connection":
+        raise HTTPException(status_code=404, detail="Preview not found")
+    if claim_err == "expired":
+        audit.write_audit(
+            action="mutate.confirm",
+            status="error",
+            connection_id=connection_id,
+            summary="preview expired",
+            detail={"preview_id": body.preview_id},
+        )
+        raise HTTPException(status_code=400, detail="Preview expired; request a new preview")
+    if claim_err == "busy":
+        raise HTTPException(
+            status_code=409,
+            detail="Preview is already being confirmed; wait for the first request to finish.",
+        )
+    if claim_err or not pending:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Preview status is {peeked['status']}",
+        )
+
     engine = get_pooled_engine(get_engine_cfg(connection))
+    plan = None
     try:
         pk = table_primary_key(engine, plan_data["table"], plan_data.get("schema_name"))
         plan = build_mutate_plan(
@@ -356,7 +385,7 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
             primary_key=pk,
         )
     except SqlGuardError as exc:
-        mark_cancelled(pending["id"])
+        mark_failed(pending["id"])
         audit.write_audit(
             action="mutate.confirm",
             status="error",
@@ -370,7 +399,7 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
     try:
         stats = preview_plan(engine, plan, max_rows=max_rows)
         if stats["blocked"]:
-            mark_cancelled(pending["id"])
+            mark_failed(pending["id"])
             audit.write_audit(
                 action="mutate.confirm",
                 status="blocked",
@@ -386,6 +415,7 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
             and int(stats["affected_count"] or 0) >= ack_threshold
         )
         if live_requires_ack and not body.ack_large_impact:
+            release_claim(pending["id"])
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -407,16 +437,23 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
+        mark_failed(pending["id"])
         audit.write_audit(
             action="mutate.confirm",
             status="error",
             connection_id=connection_id,
             summary="mutation failed",
-            detail={"preview_id": body.preview_id, "sql": plan.sql, "error": str(exc)},
+            detail={
+                "preview_id": body.preview_id,
+                "sql": plan.sql if plan else None,
+                "error": str(exc),
+            },
         )
         raise HTTPException(status_code=400, detail=f"Mutation failed: {exc}") from exc
 
     mark_executed(pending["id"])
+    secrets = secret_columns_for_table(policy, plan.table, plan.schema_name)
+    changed = redact_rows(changed, secret_columns=secrets)
     columns = list(changed[0].keys()) if changed else []
     audit.write_audit(
         action="mutate.confirm",

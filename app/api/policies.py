@@ -85,6 +85,7 @@ def allow_all_tables(
             schema_name=t.schema_name,
             allowed_columns=None,
             denied_columns=[],
+            secret_columns=[],
             allow_select=allow_select,
             allow_insert=allow_insert,
             allow_update=allow_update,
