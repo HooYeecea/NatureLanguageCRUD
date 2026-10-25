@@ -6,13 +6,16 @@ const KEY = 'nlcrud.workspace.v1'
 
 export type PersistedChatItem = {
   role: 'user' | 'assistant'
-  kind?: 'text' | 'sql' | 'result' | 'error'
+  kind?: 'text' | 'sql' | 'result' | 'error' | 'diff'
   text: string
   sql?: string
   editableSql?: boolean
   /** When set, editing SQL revises this mutate preview instead of running SELECT */
   mutatePreviewId?: string
   rows?: Record<string, unknown>[]
+  beforeRows?: Record<string, unknown>[]
+  afterRows?: Record<string, unknown>[]
+  diffOperation?: string
   rowCount?: number
   validationOk?: boolean | null
   validationNote?: string | null

@@ -1,4 +1,5 @@
 import type {
+  AccessPolicy,
   AuditLog,
   AuthStatus,
   ChatTurn,
@@ -106,11 +107,18 @@ export const api = {
   getSchema: (id: string) =>
     request<SchemaOverview>(`/api/connections/${id}/schema`),
 
+  getPolicy: (id: string) =>
+    request<AccessPolicy>(`/api/connections/${id}/policy`),
+
   selectTables: (
     id: string,
-    tables: Array<{ table: string; schema_name?: string | null }>,
+    tables: Array<{
+      table: string
+      schema_name?: string | null
+      secret_columns?: string[]
+    }>,
   ) =>
-    request(`/api/connections/${id}/workspace/tables`, {
+    request<AccessPolicy>(`/api/connections/${id}/workspace/tables`, {
       method: 'PUT',
       body: JSON.stringify({
         tables,
@@ -120,6 +128,12 @@ export const api = {
         allow_delete: false,
       }),
     }),
+
+  cancelMutate: (id: string, preview_id: string) =>
+    request<{ preview_id: string; status: string }>(
+      `/api/connections/${id}/mutate/cancel/${preview_id}`,
+      { method: 'POST' },
+    ),
 
   interpret: (
     id: string,

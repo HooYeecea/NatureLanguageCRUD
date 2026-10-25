@@ -117,7 +117,31 @@ export type MutateExecuteResult = {
   lastrowid?: number | null
   status: string
   changed_rows: Record<string, unknown>[]
+  before_rows?: Record<string, unknown>[]
   columns: string[]
+}
+
+export type TablePolicy = {
+  table: string
+  schema_name?: string | null
+  allowed_columns?: string[] | null
+  denied_columns?: string[]
+  secret_columns?: string[]
+  allow_select?: boolean
+  allow_insert?: boolean
+  allow_update?: boolean
+  allow_delete?: boolean
+}
+
+export type AccessPolicy = {
+  connection_id: string
+  tables: TablePolicy[]
+  require_where_for_update?: boolean
+  require_where_for_delete?: boolean
+  max_rows_per_mutation?: number
+  max_rows_per_query?: number
+  confirm_rows_threshold?: number
+  updated_at?: string
 }
 
 export type Settings = {
