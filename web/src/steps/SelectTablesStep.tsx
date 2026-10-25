@@ -16,6 +16,8 @@ export function SelectTablesStep({ connection, onBack, onNext }: Props) {
   const [schema, setSchema] = useState<SchemaOverview | null>(null)
   const [glossary, setGlossary] = useState<GlossaryTable[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [secrets, setSecrets] = useState<Record<string, Set<string>>>({})
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -25,13 +27,24 @@ export function SelectTablesStep({ connection, onBack, onNext }: Props) {
     Promise.all([
       api.getSchema(connection.id),
       api.getGlossary(connection.id).catch(() => ({ tables: [] as GlossaryTable[] })),
+      api.getPolicy(connection.id).catch(() => null),
     ])
-      .then(([s, g]) => {
+      .then(([s, g, policy]) => {
         setSchema(s)
         setGlossary(g.tables || [])
-        if (s.tables.length <= 8) {
-          setSelected(new Set(s.tables.map((t) => keyOf(t.schema_name, t.name))))
+        const nextSelected = new Set<string>()
+        const nextSecrets: Record<string, Set<string>> = {}
+        if (policy?.tables?.length) {
+          for (const tp of policy.tables) {
+            const k = keyOf(tp.schema_name, tp.table)
+            nextSelected.add(k)
+            nextSecrets[k] = new Set(tp.secret_columns || [])
+          }
+        } else if (s.tables.length <= 8) {
+          for (const t of s.tables) nextSelected.add(keyOf(t.schema_name, t.name))
         }
+        setSelected(nextSelected)
+        setSecrets(nextSecrets)
       })
       .catch((e) => setError(friendlyError(e)))
       .finally(() => setBusy(false))
@@ -79,15 +92,48 @@ export function SelectTablesStep({ connection, onBack, onNext }: Props) {
   const selectedList = useMemo(() => {
     return tables
       .filter((t) => selected.has(keyOf(t.schema_name, t.name)))
-      .map((t) => ({ table: t.name, schema_name: t.schema_name }))
-  }, [tables, selected])
+      .map((t) => {
+        const k = keyOf(t.schema_name, t.name)
+        return {
+          table: t.name,
+          schema_name: t.schema_name,
+          secret_columns: Array.from(secrets[k] || []),
+        }
+      })
+  }, [tables, selected, secrets])
 
   function toggle(schemaName: string | null | undefined, name: string) {
     const k = keyOf(schemaName, name)
     setSelected((prev) => {
       const next = new Set(prev)
-      if (next.has(k)) next.delete(k)
-      else next.add(k)
+      if (next.has(k)) {
+        next.delete(k)
+        setExpanded((e) => {
+          const ne = new Set(e)
+          ne.delete(k)
+          return ne
+        })
+      } else {
+        next.add(k)
+      }
+      return next
+    })
+  }
+
+  function toggleSecret(tableKey: string, column: string) {
+    setSecrets((prev) => {
+      const cur = new Set(prev[tableKey] || [])
+      if (cur.has(column)) cur.delete(column)
+      else cur.add(column)
+      return { ...prev, [tableKey]: cur }
+    })
+  }
+
+  function toggleExpand(tableKey: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(tableKey)) next.delete(tableKey)
+      else next.add(tableKey)
       return next
     })
   }
@@ -106,6 +152,7 @@ export function SelectTablesStep({ connection, onBack, onNext }: Props) {
 
   function clearAll() {
     setSelected(new Set())
+    setExpanded(new Set())
   }
 
   async function continueNext() {
@@ -114,7 +161,10 @@ export function SelectTablesStep({ connection, onBack, onNext }: Props) {
     setError(null)
     try {
       await api.selectTables(connection.id, selectedList)
-      onNext(schema, selectedList)
+      onNext(
+        schema,
+        selectedList.map(({ table, schema_name }) => ({ table, schema_name })),
+      )
     } catch (e) {
       setError(friendlyError(e))
     } finally {
@@ -128,7 +178,7 @@ export function SelectTablesStep({ connection, onBack, onNext }: Props) {
         <h2>选择要操作的表</h2>
         <p>
           连接 <strong>{connection.name}</strong>（{connection.dialect}）。可多选，后续
-          NL 操作仅在此范围内。支持按表名、中文别名或字段名搜索。
+          NL 操作仅在此范围内。展开已选表可勾选<strong>敏感列</strong>（样例/查询/回读会脱敏）。
         </p>
       </header>
 
@@ -177,29 +227,52 @@ export function SelectTablesStep({ connection, onBack, onNext }: Props) {
                       const k = keyOf(t.schema_name, t.name)
                       const checked = selected.has(k)
                       const alias = aliasMap.get(k)
+                      const secretCount = (secrets[k] || new Set()).size
+                      const isOpen = expanded.has(k)
                       return (
                         <li key={k}>
-                          <label className={`table-item ${checked ? 'on' : ''}`}>
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => toggle(t.schema_name, t.name)}
-                            />
-                            <div>
-                              <strong>
-                                {t.schema_name ? `${t.schema_name}.` : ''}
-                                {t.name}
-                              </strong>
-                              {alias && alias !== t.name && (
-                                <span className="alias-chip">{alias}</span>
-                              )}
+                          <div className={`table-item ${checked ? 'on' : ''}`}>
+                            <label className="table-check">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggle(t.schema_name, t.name)}
+                              />
+                            </label>
+                            <div className="table-item-body">
+                              <div className="table-item-head">
+                                <strong>
+                                  {t.schema_name ? `${t.schema_name}.` : ''}
+                                  {t.name}
+                                </strong>
+                                {alias && alias !== t.name && (
+                                  <span className="alias-chip">{alias}</span>
+                                )}
+                                {checked && (
+                                  <button
+                                    type="button"
+                                    className="btn ghost secret-toggle"
+                                    onClick={() => toggleExpand(k)}
+                                  >
+                                    {isOpen ? '收起敏感列' : '敏感列'}
+                                    {secretCount > 0 ? ` (${secretCount})` : ''}
+                                  </button>
+                                )}
+                              </div>
                               <div className="muted small">
                                 {t.columns.length} 字段
                                 {t.primary_key.length > 0 && ` · PK: ${t.primary_key.join(', ')}`}
                                 {t.foreign_keys.length > 0 && ` · FK: ${t.foreign_keys.length}`}
                               </div>
+                              {checked && isOpen && (
+                                <SecretColumnPicker
+                                  table={t}
+                                  selected={secrets[k] || new Set()}
+                                  onToggle={(col) => toggleSecret(k, col)}
+                                />
+                              )}
                             </div>
-                          </label>
+                          </div>
                         </li>
                       )
                     })}
@@ -225,6 +298,38 @@ export function SelectTablesStep({ connection, onBack, onNext }: Props) {
         </button>
       </div>
     </section>
+  )
+}
+
+function SecretColumnPicker({
+  table,
+  selected,
+  onToggle,
+}: {
+  table: TableInfo
+  selected: Set<string>
+  onToggle: (column: string) => void
+}) {
+  if (!table.columns.length) {
+    return <p className="muted small secret-hint">该表没有可配置字段。</p>
+  }
+  return (
+    <div className="secret-picker">
+      <p className="muted small secret-hint">勾选后，样例 / 查询结果 / 写入回读中显示为 [redacted]</p>
+      <div className="secret-cols">
+        {table.columns.map((c) => (
+          <label key={c.name} className={`secret-col ${selected.has(c.name) ? 'on' : ''}`}>
+            <input
+              type="checkbox"
+              checked={selected.has(c.name)}
+              onChange={() => onToggle(c.name)}
+            />
+            <span>{c.name}</span>
+            <span className="muted small">{c.type}</span>
+          </label>
+        ))}
+      </div>
+    </div>
   )
 }
 

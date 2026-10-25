@@ -588,7 +588,65 @@ textarea {
   display: flex;
   gap: 0.75rem;
   align-items: flex-start;
+}
+
+.table-check {
+  display: flex;
+  padding-top: 0.15rem;
   cursor: pointer;
+}
+
+.table-item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.table-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.secret-toggle {
+  margin-left: auto;
+  font-size: 0.82rem;
+  padding: 0.2rem 0.55rem;
+}
+
+.secret-picker {
+  margin-top: 0.65rem;
+  padding: 0.65rem 0.7rem;
+  border-radius: 10px;
+  background: #f7faf9;
+  border: 1px dashed #c5d9d3;
+}
+
+.secret-hint {
+  margin: 0 0 0.5rem;
+}
+
+.secret-cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.secret-col {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.secret-col.on {
+  border-color: #d4a574;
+  background: #fff8f0;
 }
 
 .table-item.on {
@@ -832,6 +890,101 @@ td {
 
 .composer {
   margin-top: 1rem;
+}
+
+.suggest-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.85rem;
+}
+
+.suggest-chip {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 999px;
+  padding: 0.28rem 0.7rem;
+  font: inherit;
+  font-size: 0.86rem;
+  color: #355;
+  cursor: pointer;
+}
+
+.suggest-chip:hover:not(:disabled) {
+  border-color: #9ec9c0;
+  background: #f2faf7;
+}
+
+.suggest-chip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.diff-block {
+  margin-top: 0.55rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.diff-row-card {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem;
+}
+
+@media (max-width: 720px) {
+  .diff-row-card {
+    grid-template-columns: 1fr;
+  }
+}
+
+.diff-side {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.55rem 0.7rem;
+  background: #fafbfc;
+}
+
+.diff-label {
+  margin: 0 0 0.4rem;
+  font-size: 0.82rem;
+  color: #678;
+  font-weight: 600;
+}
+
+.diff-fields {
+  margin: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.diff-fields > div {
+  display: grid;
+  grid-template-columns: minmax(72px, 28%) 1fr;
+  gap: 0.35rem;
+  padding: 0.2rem 0.3rem;
+  border-radius: 6px;
+}
+
+.diff-fields dt {
+  margin: 0;
+  color: #789;
+  font-size: 0.82rem;
+}
+
+.diff-fields dd {
+  margin: 0;
+  word-break: break-word;
+  font-size: 0.88rem;
+}
+
+.diff-fields .changed {
+  background: #fff1f0;
+}
+
+.diff-fields .changed.after {
+  background: #eef9f2;
 }
 
 .confirm-bar {

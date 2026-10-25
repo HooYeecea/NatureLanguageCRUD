@@ -1,9 +1,18 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { api } from '../api'
 import { downloadCsv } from '../csv'
 import { friendlyError } from '../errors'
 import type { PersistedChatItem } from '../session'
-import type { ChatTurn, Connection, InterpretResult, MutatePreview, QueryResult } from '../types'
+import { suggestPrompts } from '../suggestPrompts'
+import type {
+  ChatTurn,
+  Connection,
+  GlossaryTable,
+  InterpretResult,
+  MutateExecuteResult,
+  MutatePreview,
+  QueryResult,
+} from '../types'
 
 type Props = {
   connection: Connection
@@ -47,6 +56,7 @@ export function WorkbenchStep({
   )
   const [pending, setPending] = useState<MutatePreview | null>(null)
   const [ackLarge, setAckLarge] = useState(false)
+  const [glossary, setGlossary] = useState<GlossaryTable[]>([])
   const chatRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -59,6 +69,18 @@ export function WorkbenchStep({
       items.map(({ preview: _p, ...rest }) => rest),
     )
   }, [items, onChatChange])
+
+  useEffect(() => {
+    api
+      .getGlossary(connection.id)
+      .then((g) => setGlossary(g.tables || []))
+      .catch(() => setGlossary([]))
+  }, [connection.id])
+
+  const prompts = useMemo(
+    () => suggestPrompts(mode, interpret.selected_tables || [], glossary),
+    [mode, interpret.selected_tables, glossary],
+  )
 
   function setModeAndNotify(next: 'query' | 'mutate') {
     setMode(next)
@@ -248,27 +270,7 @@ export function WorkbenchStep({
       const result = await api.confirmMutate(connection.id, pending.preview_id, {
         ack_large_impact: ackLarge || !pending.requires_ack,
       })
-      const next: ChatItem[] = [
-        {
-          role: 'assistant',
-          kind: 'text',
-          text: `已执行 ${result.operation}，影响 ${result.rowcount} 行。`,
-          sql: result.sql,
-        },
-      ]
-      if (result.changed_rows && result.changed_rows.length > 0) {
-        next.push({
-          role: 'assistant',
-          kind: 'result',
-          text:
-            result.operation === 'delete'
-              ? `已删除的行（回读前快照，${result.changed_rows.length}）`
-              : `变更后回读（${result.changed_rows.length} 行）`,
-          rows: result.changed_rows,
-          rowCount: result.changed_rows.length,
-        })
-      }
-      setItems((prev) => [...prev, ...next])
+      setItems((prev) => [...prev, ...appendMutateResult(result)])
       setPending(null)
       setAckLarge(false)
     } catch (err) {
@@ -276,6 +278,66 @@ export function WorkbenchStep({
     } finally {
       setBusy(false)
     }
+  }
+
+  async function cancelPending() {
+    if (!pending) return
+    const previewId = pending.preview_id
+    setBusy(true)
+    setError(null)
+    try {
+      await api.cancelMutate(connection.id, previewId)
+      setPending(null)
+      setAckLarge(false)
+      setItems((prev) => [
+        ...prev,
+        { role: 'assistant', kind: 'text', text: '已取消该写入预览。' },
+      ])
+    } catch (err) {
+      // Still clear local pending so the bar does not stick after expiry/cancel races.
+      setPending(null)
+      setAckLarge(false)
+      setError(friendlyError(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function appendMutateResult(result: MutateExecuteResult): ChatItem[] {
+    const next: ChatItem[] = [
+      {
+        role: 'assistant',
+        kind: 'text',
+        text: `已执行 ${result.operation}，影响 ${result.rowcount} 行。`,
+        sql: result.sql,
+      },
+    ]
+    const before = result.before_rows || []
+    const after = result.changed_rows || []
+    if (result.operation === 'update' && (before.length > 0 || after.length > 0)) {
+      next.push({
+        role: 'assistant',
+        kind: 'diff',
+        text: `变更对比（${Math.max(before.length, after.length)} 行）`,
+        beforeRows: before,
+        afterRows: after,
+        diffOperation: result.operation,
+        rowCount: Math.max(before.length, after.length),
+      })
+    } else if (after.length > 0 || before.length > 0) {
+      const rows = result.operation === 'delete' ? before : after
+      next.push({
+        role: 'assistant',
+        kind: 'result',
+        text:
+          result.operation === 'delete'
+            ? `已删除的行（回读前快照，${rows.length}）`
+            : `变更后回读（${rows.length} 行）`,
+        rows,
+        rowCount: rows.length,
+      })
+    }
+    return next
   }
 
   return (
@@ -341,6 +403,12 @@ export function WorkbenchStep({
                 {item.validationOk === false ? '校验提醒：' : '校验：'}
                 {item.validationNote}
               </p>
+            )}
+            {item.kind === 'diff' && (
+              <MutateDiff
+                beforeRows={item.beforeRows || []}
+                afterRows={item.afterRows || []}
+              />
             )}
             {item.rows && item.rows.length > 0 && (
               <div className="result-block">
@@ -421,10 +489,7 @@ export function WorkbenchStep({
               type="button"
               className="btn ghost"
               disabled={busy}
-              onClick={() => {
-                setPending(null)
-                setAckLarge(false)
-              }}
+              onClick={() => void cancelPending()}
             >
               取消
             </button>
@@ -437,6 +502,23 @@ export function WorkbenchStep({
               确认执行
             </button>
           </div>
+        </div>
+      )}
+
+      {prompts.length > 0 && !pending && (
+        <div className="suggest-prompts" aria-label="推荐问法">
+          <span className="muted small">试试：</span>
+          {prompts.map((p) => (
+            <button
+              key={p}
+              type="button"
+              className="suggest-chip"
+              disabled={busy}
+              onClick={() => setPrompt(p)}
+            >
+              {p}
+            </button>
+          ))}
         </div>
       )}
 
@@ -543,4 +625,73 @@ function formatCell(v: unknown) {
   if (v === null || v === undefined) return ''
   if (typeof v === 'object') return JSON.stringify(v)
   return String(v)
+}
+
+function MutateDiff({
+  beforeRows,
+  afterRows,
+}: {
+  beforeRows: Record<string, unknown>[]
+  afterRows: Record<string, unknown>[]
+}) {
+  const count = Math.max(beforeRows.length, afterRows.length, 1)
+  const columns = Array.from(
+    new Set([
+      ...beforeRows.flatMap((r) => Object.keys(r)),
+      ...afterRows.flatMap((r) => Object.keys(r)),
+    ]),
+  )
+  if (columns.length === 0) {
+    return <p className="muted small">没有可对比的字段。</p>
+  }
+
+  return (
+    <div className="diff-block">
+      {Array.from({ length: Math.min(count, 20) }, (_, i) => {
+        const before = beforeRows[i] || {}
+        const after = afterRows[i] || {}
+        return (
+          <div key={i} className="diff-row-card">
+            <div className="diff-side">
+              <p className="diff-label">变更前</p>
+              <dl className="diff-fields">
+                {columns.map((col) => {
+                  const changed = !valuesEqual(before[col], after[col])
+                  return (
+                    <div key={`b-${col}`} className={changed ? 'changed' : ''}>
+                      <dt>{col}</dt>
+                      <dd>{formatCell(before[col])}</dd>
+                    </div>
+                  )
+                })}
+              </dl>
+            </div>
+            <div className="diff-side">
+              <p className="diff-label">变更后</p>
+              <dl className="diff-fields">
+                {columns.map((col) => {
+                  const changed = !valuesEqual(before[col], after[col])
+                  return (
+                    <div key={`a-${col}`} className={changed ? 'changed after' : ''}>
+                      <dt>{col}</dt>
+                      <dd>{formatCell(after[col])}</dd>
+                    </div>
+                  )
+                })}
+              </dl>
+            </div>
+          </div>
+        )
+      })}
+      {count > 20 && (
+        <p className="muted small">仅展示前 20 行对比，共 {count} 行。</p>
+      )}
+    </div>
+  )
+}
+
+function valuesEqual(a: unknown, b: unknown) {
+  if (a === b) return true
+  if (a == null && b == null) return true
+  return JSON.stringify(a) === JSON.stringify(b)
 }
