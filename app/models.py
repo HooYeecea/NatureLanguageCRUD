@@ -249,6 +249,7 @@ class MutateExecuteResult(BaseModel):
     lastrowid: Optional[int] = None
     status: str = "executed"
     changed_rows: list[dict[str, Any]] = Field(default_factory=list)
+    before_rows: list[dict[str, Any]] = Field(default_factory=list)
     columns: list[str] = Field(default_factory=list)
 
 

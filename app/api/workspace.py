@@ -33,6 +33,7 @@ class SettingsUpdate(BaseModel):
 class SelectedTable(BaseModel):
     table: str
     schema_name: str | None = None
+    secret_columns: list[str] = Field(default_factory=list)
 
 
 class SelectTablesRequest(BaseModel):
@@ -134,7 +135,12 @@ def select_workspace_tables(connection_id: str, body: SelectTablesRequest):
                     (prev_by_key.get((t.table, t.schema_name)) or {}).get("denied_columns") or []
                 ),
                 secret_columns=list(
-                    (prev_by_key.get((t.table, t.schema_name)) or {}).get("secret_columns") or []
+                    t.secret_columns
+                    if t.secret_columns is not None
+                    else (
+                        (prev_by_key.get((t.table, t.schema_name)) or {}).get("secret_columns")
+                        or []
+                    )
                 ),
                 allow_select=body.allow_select,
                 allow_insert=body.allow_insert,

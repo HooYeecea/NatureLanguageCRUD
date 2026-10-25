@@ -453,8 +453,11 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
 
     mark_executed(pending["id"])
     secrets = secret_columns_for_table(policy, plan.table, plan.schema_name)
+    before = redact_rows(result.get("before_rows") or [], secret_columns=secrets)
     changed = redact_rows(changed, secret_columns=secrets)
-    columns = list(changed[0].keys()) if changed else []
+    columns = list(changed[0].keys()) if changed else (
+        list(before[0].keys()) if before else []
+    )
     audit.write_audit(
         action="mutate.confirm",
         status="success",
@@ -467,6 +470,7 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
             "sql": plan.sql,
             "rowcount": result["rowcount"],
             "changed_row_count": len(changed),
+            "before_row_count": len(before),
         },
     )
     return MutateExecuteResult(
@@ -478,6 +482,7 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
         lastrowid=result.get("lastrowid"),
         status="executed",
         changed_rows=changed,
+        before_rows=before,
         columns=columns,
     )
 
