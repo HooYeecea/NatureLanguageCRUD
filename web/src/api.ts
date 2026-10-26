@@ -9,6 +9,7 @@ import type {
   InterpretResult,
   MutateExecuteResult,
   MutatePreview,
+  MutateUndoResult,
   QueryResult,
   SchemaOverview,
   Settings,
@@ -134,6 +135,11 @@ export const api = {
       `/api/connections/${id}/mutate/cancel/${preview_id}`,
       { method: 'POST' },
     ),
+
+  undoMutate: (id: string, undo_id: string) =>
+    request<MutateUndoResult>(`/api/connections/${id}/mutate/undo/${undo_id}`, {
+      method: 'POST',
+    }),
 
   interpret: (
     id: string,

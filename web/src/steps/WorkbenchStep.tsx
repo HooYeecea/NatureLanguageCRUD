@@ -335,9 +335,43 @@ export function WorkbenchStep({
             : `变更后回读（${rows.length} 行）`,
         rows,
         rowCount: rows.length,
+        undoId: result.undo_id || undefined,
       })
     }
     return next
+  }
+
+  async function undoDelete(undoId: string) {
+    setBusy(true)
+    setError(null)
+    try {
+      const restored = await api.undoMutate(connection.id, undoId)
+      setItems((prev) => [
+        ...prev.map((item) =>
+          item.undoId === undoId ? { ...item, undoId: undefined } : item,
+        ),
+        {
+          role: 'assistant',
+          kind: 'text',
+          text: `已撤销删除，恢复 ${restored.restored_count} 行到 ${restored.table}。`,
+        },
+        ...(restored.rows.length
+          ? [
+              {
+                role: 'assistant' as const,
+                kind: 'result' as const,
+                text: `恢复后的行（${restored.rows.length}）`,
+                rows: restored.rows,
+                rowCount: restored.rows.length,
+              },
+            ]
+          : []),
+      ])
+    } catch (err) {
+      setError(friendlyError(err))
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -417,6 +451,16 @@ export function WorkbenchStep({
                     <span className="trunc-note">
                       结果已截断{item.limit ? `（LIMIT ${item.limit}）` : ''}，导出仅为当前返回行
                     </span>
+                  )}
+                  {item.undoId && (
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      disabled={busy}
+                      onClick={() => void undoDelete(item.undoId!)}
+                    >
+                      撤销删除
+                    </button>
                   )}
                   <button
                     type="button"

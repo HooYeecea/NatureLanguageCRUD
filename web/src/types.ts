@@ -54,6 +54,7 @@ export type InterpretResult = {
   warnings: string[]
   source: string
   cached?: boolean
+  schema_drifted?: boolean
   updated_at?: string | null
 }
 
@@ -119,6 +120,15 @@ export type MutateExecuteResult = {
   changed_rows: Record<string, unknown>[]
   before_rows?: Record<string, unknown>[]
   columns: string[]
+  undo_id?: string | null
+}
+
+export type MutateUndoResult = {
+  undo_id: string
+  table: string
+  restored_count: number
+  status: string
+  rows: Record<string, unknown>[]
 }
 
 export type TablePolicy = {

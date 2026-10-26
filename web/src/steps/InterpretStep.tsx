@@ -43,9 +43,11 @@ export function InterpretStep({
         if (!cancelled) {
           setResult(interpreted)
           setStatusText(
-            interpreted.cached
-              ? '已加载缓存的分析结果（可重新分析）'
-              : '分析完成并已保存，可复用',
+            interpreted.schema_drifted
+              ? '检测到表结构变化，已自动重新解读'
+              : interpreted.cached
+                ? '已加载缓存的分析结果（可重新分析）'
+                : '分析完成并已保存，可复用',
           )
           const g = await api.getGlossary(connection.id)
           if (!cancelled) setGlossary(g.tables || [])
