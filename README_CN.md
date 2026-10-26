@@ -25,6 +25,13 @@
 - **原子确认**：`preview_id` 仅可 `pending → executing` 一次，防重复点击
 - **敏感列脱敏**：策略 `secret_columns` + 列名启发式，覆盖样例 / 查询结果 / 写入回读
 - **可选 API Key**：设置 `WORKBENCH_API_KEY`（生产环境必填）；前端通过 `X-API-Key` 访问
+- **取消预览走后端**：确认条「取消」会调用 `mutate/cancel`
+- **变更 Diff**：确认后返回 before/after，工作台并排对比字段
+- **敏感列 UI**：选表步骤可勾选脱敏字段
+- **推荐问法**：按已选表与词典生成可点击示例
+- **受控 JOIN / 聚合**：INNER/LEFT/RIGHT JOIN（需 ON）；COUNT/SUM/AVG/MIN/MAX + GROUP BY
+- **Schema 漂移检测**：指纹比对选表结构，变化时自动重新解读
+- **可撤销删除**：DELETE 后短时保留主键快照，可通过 `mutate/undo` 恢复
 - **CSV 导出**：查询结果可下载；打到 `LIMIT` 时明确提示已截断
 
 - **工作区恢复**：向导与聊天刷新后尽量保留（`sessionStorage`）

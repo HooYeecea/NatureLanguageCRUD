@@ -25,6 +25,13 @@ Natural-language workbench for relational databases. Connect your DB, pick table
 - **Atomic confirm**: preview_id claims `pending → executing` once (no double confirm)
 - **Secret columns**: policy `secret_columns` + name heuristics redact samples, query rows, and mutate read-back
 - **Optional API key**: set `WORKBENCH_API_KEY` (required in production); UI sends `X-API-Key`
+- **Cancel mutate via API**: confirm bar cancel calls `mutate/cancel` (not only local UI state)
+- **Update Diff**: confirm returns before/after rows; workbench shows a side-by-side field diff
+- **Secret columns UI**: pick sensitive columns on the select-tables step
+- **Suggested prompts**: clickable NL hints from selected tables + glossary
+- **Guarded JOIN / aggregates**: INNER/LEFT/RIGHT JOIN with ON; COUNT/SUM/AVG/MIN/MAX + GROUP BY
+- **Schema drift detection**: fingerprint selected tables; auto re-interpret when structure changes
+- **Undo delete**: short-lived PK snapshot after DELETE; restore via `mutate/undo`
 - **CSV export**: download query results; LIMIT truncation is called out in the UI
 - **Workspace restore**: wizard + chat survive refresh via `sessionStorage`
 - **Schema analysis cache**: reuse relationship interpretation; optional re-analyze with LLM
