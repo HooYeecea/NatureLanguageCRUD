@@ -2,10 +2,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app import audit, meta_db, policy_store
-from app.analysis_store import get_analysis, save_analysis
+from app.analysis_store import get_analysis, invalidate_analysis, save_analysis
 from app.db.engines import get_pooled_engine
 from app.db.samples import fetch_table_samples
-from app.db.schema import get_engine_cfg, introspect_schema
+from app.db.schema import get_engine_cfg, introspect_schema, schema_fingerprint
 from app.glossary import merge_glossary, suggest_glossary
 from app.glossary_store import get_glossary, save_glossary
 from app.models import AccessPolicyOut, AccessPolicyUpsert, GlossaryOut, GlossaryUpsert, TablePolicy
@@ -61,6 +61,7 @@ class InterpretResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     source: str = "metadata"
     cached: bool = False
+    schema_drifted: bool = False
     updated_at: str | None = None
 
 
@@ -166,10 +167,34 @@ def interpret_selected_tables(connection_id: str, body: InterpretRequest):
         raise HTTPException(status_code=400, detail="Select at least one table")
 
     table_refs = [t.model_dump() for t in body.tables]
+    schema_drifted = False
+
+    engine = get_pooled_engine(get_engine_cfg(data))
+    try:
+        overview = introspect_schema(engine, connection_id, data["dialect"])
+        selected = []
+        for t in overview.tables:
+            match = False
+            for req in body.tables:
+                if req.table != t.name:
+                    continue
+                if req.schema_name is None or t.schema_name is None or req.schema_name == t.schema_name:
+                    match = True
+                    break
+            if match:
+                selected.append(t.model_dump())
+        if not selected:
+            raise HTTPException(status_code=400, detail="None of the selected tables were found in schema")
+        live_fp = schema_fingerprint(selected)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Schema introspection failed: {exc}") from exc
 
     if not body.force:
         cached = get_analysis(connection_id, table_refs)
-        if cached:
+        cached_fp = (cached or {}).get("schema_fingerprint")
+        if cached and cached_fp and cached_fp == live_fp:
             _ensure_glossary(
                 connection_id,
                 [
@@ -189,31 +214,18 @@ def interpret_selected_tables(connection_id: str, body: InterpretRequest):
                 warnings=cached.get("warnings") or [],
                 source=cached.get("source") or "cache",
                 cached=True,
+                schema_drifted=False,
                 updated_at=cached["updated_at"].isoformat() if cached.get("updated_at") else None,
             )
+        if cached and cached_fp and cached_fp != live_fp:
+            schema_drifted = True
+            invalidate_analysis(connection_id, table_refs)
+        # Legacy cache without fingerprint: fall through and refresh.
 
-    engine = get_pooled_engine(get_engine_cfg(data))
-    samples: dict = {}
     try:
-        overview = introspect_schema(engine, connection_id, data["dialect"])
-        selected = []
-        for t in overview.tables:
-            match = False
-            for req in body.tables:
-                if req.table != t.name:
-                    continue
-                if req.schema_name is None or t.schema_name is None or req.schema_name == t.schema_name:
-                    match = True
-                    break
-            if match:
-                selected.append(t.model_dump())
-        if not selected:
-            raise HTTPException(status_code=400, detail="None of the selected tables were found in schema")
         samples = fetch_table_samples(engine, data["dialect"], selected)
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=f"Schema introspection failed: {exc}") from exc
+    except Exception:  # noqa: BLE001
+        samples = {}
 
     try:
         result = interpret_schema(
@@ -233,7 +245,16 @@ def interpret_selected_tables(connection_id: str, body: InterpretRequest):
         warnings.append(f"LLM interpret failed, used metadata fallback: {exc}")
         result["warnings"] = warnings
 
+    if schema_drifted:
+        warnings = list(result.get("warnings") or [])
+        warnings.insert(
+            0,
+            "检测到表结构相对上次分析已变化，已自动重新解读（请核对关系与词典）。",
+        )
+        result["warnings"] = warnings
+
     result["dialect"] = data["dialect"]
+    result["schema_fingerprint"] = live_fp
     saved = save_analysis(connection_id, table_refs, result)
     _ensure_glossary(connection_id, selected, result)
 
@@ -248,6 +269,7 @@ def interpret_selected_tables(connection_id: str, body: InterpretRequest):
         warnings=result.get("warnings") or [],
         source=result.get("source") or "metadata",
         cached=False,
+        schema_drifted=schema_drifted,
         updated_at=saved["updated_at"].isoformat() if saved and saved.get("updated_at") else None,
     )
 
@@ -284,6 +306,7 @@ def get_cached_analysis(connection_id: str):
         warnings=cached.get("warnings") or [],
         source=cached.get("source") or "cache",
         cached=True,
+        schema_drifted=False,
         updated_at=cached["updated_at"].isoformat() if cached.get("updated_at") else None,
     )
 

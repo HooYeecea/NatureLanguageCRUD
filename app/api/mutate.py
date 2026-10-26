@@ -15,6 +15,7 @@ from app.models import (
     MutatePreviewResult,
     MutateRequest,
     MutateReviseRequest,
+    MutateUndoResult,
     NlMutateRequest,
 )
 from app.mutate import (
@@ -32,6 +33,12 @@ from app.mutate import (
     parse_mutate_sql,
     preview_plan,
     readback_rows,
+)
+from app.mutate.undo import (
+    claim_undo,
+    create_undo,
+    mark_undo_failed,
+    mark_undo_restored,
 )
 from app.query import LlmNotConfigured, SqlGuardError
 from app.glossary import glossary_context_text
@@ -371,6 +378,7 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
 
     engine = get_pooled_engine(get_engine_cfg(connection))
     plan = None
+    pk: list[str] = []
     try:
         pk = table_primary_key(engine, plan_data["table"], plan_data.get("schema_name"))
         plan = build_mutate_plan(
@@ -452,8 +460,22 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
         raise HTTPException(status_code=400, detail=f"Mutation failed: {exc}") from exc
 
     mark_executed(pending["id"])
+    raw_before = result.get("before_rows") or []
+    undo_id = None
+    if plan.operation == "delete" and raw_before and pk:
+        undo = create_undo(
+            connection_id,
+            table=plan.table,
+            schema_name=plan.schema_name,
+            dialect=connection["dialect"],
+            rows=raw_before,
+            primary_key=list(pk),
+        )
+        if undo:
+            undo_id = undo["id"]
+
     secrets = secret_columns_for_table(policy, plan.table, plan.schema_name)
-    before = redact_rows(result.get("before_rows") or [], secret_columns=secrets)
+    before = redact_rows(raw_before, secret_columns=secrets)
     changed = redact_rows(changed, secret_columns=secrets)
     columns = list(changed[0].keys()) if changed else (
         list(before[0].keys()) if before else []
@@ -471,6 +493,7 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
             "rowcount": result["rowcount"],
             "changed_row_count": len(changed),
             "before_row_count": len(before),
+            "undo_id": undo_id,
         },
     )
     return MutateExecuteResult(
@@ -484,6 +507,7 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
         changed_rows=changed,
         before_rows=before,
         columns=columns,
+        undo_id=undo_id,
     )
 
 
@@ -502,3 +526,69 @@ def mutate_cancel(connection_id: str, preview_id: str):
         detail={"preview_id": preview_id},
     )
     return {"preview_id": preview_id, "status": "cancelled"}
+
+
+@router.post("/{connection_id}/mutate/undo/{undo_id}", response_model=MutateUndoResult)
+def mutate_undo(connection_id: str, undo_id: str):
+    """Re-insert rows captured before a DELETE (short TTL, PK required)."""
+    connection = _load_connection(connection_id)
+    policy = policy_store.get_policy(connection_id)
+    undo, err = claim_undo(undo_id, connection_id=connection_id)
+    if err == "not_found" or err == "wrong_connection":
+        raise HTTPException(status_code=404, detail="Undo snapshot not found")
+    if err == "expired":
+        raise HTTPException(status_code=400, detail="Undo snapshot expired")
+    if err == "busy" or err == "not_available":
+        raise HTTPException(status_code=409, detail="Undo snapshot is not available")
+    if err or not undo:
+        raise HTTPException(status_code=400, detail="Cannot undo")
+
+    engine = get_pooled_engine(get_engine_cfg(connection))
+    restored: list[dict] = []
+    try:
+        for row in undo["rows"]:
+            values = {k: v for k, v in row.items() if k is not None}
+            if not values:
+                continue
+            plan = build_mutate_plan(
+                dialect=connection["dialect"],
+                policy=policy,
+                operation="insert",
+                table=undo["table"],
+                schema_name=undo.get("schema_name"),
+                values=values,
+                primary_key=undo.get("primary_key") or [],
+            )
+            execute_plan(engine, plan)
+            restored.append(values)
+    except SqlGuardError as exc:
+        mark_undo_failed(undo_id)
+        raise http_guard_error(exc) from exc
+    except Exception as exc:  # noqa: BLE001
+        mark_undo_failed(undo_id)
+        audit.write_audit(
+            action="mutate.undo",
+            status="error",
+            connection_id=connection_id,
+            summary="undo restore failed",
+            detail={"undo_id": undo_id, "error": str(exc)},
+        )
+        raise HTTPException(status_code=400, detail=f"Undo failed: {exc}") from exc
+
+    mark_undo_restored(undo_id)
+    secrets = secret_columns_for_table(policy, undo["table"], undo.get("schema_name"))
+    safe_rows = redact_rows(restored, secret_columns=secrets)
+    audit.write_audit(
+        action="mutate.undo",
+        status="success",
+        connection_id=connection_id,
+        summary=f"restored {len(restored)} row(s) into {undo['table']}",
+        detail={"undo_id": undo_id, "table": undo["table"], "restored_count": len(restored)},
+    )
+    return MutateUndoResult(
+        undo_id=undo_id,
+        table=undo["table"],
+        restored_count=len(restored),
+        status="restored",
+        rows=safe_rows,
+    )
