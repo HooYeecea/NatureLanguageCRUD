@@ -79,8 +79,27 @@ def get_analysis(
             "join_hints",
             "warnings",
             "dialect",
+            "schema_fingerprint",
         )},
     }
+
+
+def invalidate_analysis(connection_id: str, tables: Optional[list[dict[str, Any]]] = None) -> int:
+    """Drop cached analyses for a connection (optionally one table set). Returns rows deleted."""
+    with meta_conn() as conn:
+        ensure_analysis_table(conn)
+        if tables is None:
+            cur = conn.execute(
+                "DELETE FROM schema_analyses WHERE connection_id = ?",
+                (connection_id,),
+            )
+        else:
+            key = tables_key(tables)
+            cur = conn.execute(
+                "DELETE FROM schema_analyses WHERE connection_id = ? AND tables_key = ?",
+                (connection_id, key),
+            )
+        return int(cur.rowcount or 0)
 
 
 def get_analysis_for_connection(connection_id: str) -> Optional[dict[str, Any]]:
@@ -114,6 +133,7 @@ def get_analysis_for_connection(connection_id: str) -> Optional[dict[str, Any]]:
             "join_hints",
             "warnings",
             "dialect",
+            "schema_fingerprint",
         )},
     }
 
@@ -133,6 +153,7 @@ def save_analysis(
         "warnings": analysis.get("warnings") or [],
         "source": analysis.get("source") or "metadata",
         "dialect": analysis.get("dialect"),
+        "schema_fingerprint": analysis.get("schema_fingerprint"),
     }
     table_names = [
         t.get("table") or t.get("name")

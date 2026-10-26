@@ -40,6 +40,9 @@ def _sqlglot_dialect(dialect: str) -> str:
         raise SqlGuardError(f"Unsupported dialect: {dialect}") from exc
 
 
+_ALLOWED_AGG = (exp.Count, exp.Sum, exp.Avg, exp.Min, exp.Max)
+
+
 def _assert_select_only(expression: exp.Expression) -> exp.Expression:
     # Unwrap WITH
     root = expression
@@ -57,6 +60,7 @@ def _assert_select_only(expression: exp.Expression) -> exp.Expression:
             for node in root.walk():
                 if isinstance(node, (exp.Insert, exp.Update, exp.Delete, exp.Create, exp.Drop, exp.Command)):
                     raise SqlGuardError("Only SELECT queries are allowed")
+            _assert_select_features(expression)
             return expression
         raise SqlGuardError(f"Only SELECT queries are allowed, got: {type(root).__name__}")
 
@@ -77,7 +81,33 @@ def _assert_select_only(expression: exp.Expression) -> exp.Expression:
         # SELECT ... INTO
         if isinstance(node, exp.Table) and node.args.get("into"):
             raise SqlGuardError("SELECT INTO is not allowed")
+    _assert_select_features(expression)
     return expression
+
+
+def _assert_select_features(expression: exp.Expression) -> None:
+    """Allow INNER/LEFT/RIGHT JOIN + COUNT/SUM/AVG/MIN/MAX + GROUP BY; reject the rest."""
+    for node in expression.walk():
+        if isinstance(node, exp.Join):
+            side = str(node.args.get("side") or "").strip().lower()
+            kind = str(node.args.get("kind") or "").strip().lower()
+            label = f"{side} {kind}".strip()
+            if "cross" in label or "full" in label or "semi" in label or "anti" in label:
+                raise SqlGuardError(
+                    f"JOIN type not allowed: {label or 'unknown'}. "
+                    "Use INNER / LEFT / RIGHT JOIN only."
+                )
+            if node.args.get("on") is None and node.args.get("using") is None:
+                raise SqlGuardError("JOIN requires ON or USING (CROSS JOIN is not allowed)")
+
+        if isinstance(node, exp.AggFunc) and not isinstance(node, _ALLOWED_AGG):
+            raise SqlGuardError(
+                f"Aggregate not allowed: {type(node).__name__}. "
+                "Allowed: COUNT, SUM, AVG, MIN, MAX."
+            )
+
+        if isinstance(node, exp.Window):
+            raise SqlGuardError("Window functions are not allowed")
 
 
 def _collect_tables(expression: exp.Expression) -> list[tuple[Optional[str], str]]:
@@ -185,10 +215,15 @@ def guard_select_sql(
         raise SqlGuardError("Could not determine target tables from SQL")
 
     columns = _collect_columns(expression)
-    # Per-table access check
+    multi_table = len(tables) > 1
+    # Per-table access check. For JOIN / multi-table, only enforce table-level
+    # allow_select (column names may belong to only one of the tables).
     for schema_name, table in tables:
         # When SELECT *, don't pass columns so we only check table+op
-        cols_for_check = None if "*" in columns else (columns or None)
+        if "*" in columns or multi_table:
+            cols_for_check = None
+        else:
+            cols_for_check = columns or None
         ok, reason, _ = check_access(
             policy,
             table=table,

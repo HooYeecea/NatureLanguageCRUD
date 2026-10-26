@@ -251,6 +251,15 @@ class MutateExecuteResult(BaseModel):
     changed_rows: list[dict[str, Any]] = Field(default_factory=list)
     before_rows: list[dict[str, Any]] = Field(default_factory=list)
     columns: list[str] = Field(default_factory=list)
+    undo_id: Optional[str] = None
+
+
+class MutateUndoResult(BaseModel):
+    undo_id: str
+    table: str
+    restored_count: int
+    status: str = "restored"
+    rows: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AuditLogOut(BaseModel):

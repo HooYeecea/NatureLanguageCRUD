@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Optional
 
 from sqlalchemy.engine import Engine
@@ -113,3 +115,66 @@ def get_engine_cfg(connection: dict[str, Any]) -> dict[str, Any]:
         "password": connection.get("password") or "",
         "options": connection.get("options") or {},
     }
+
+
+def schema_fingerprint(tables: list[dict[str, Any]]) -> str:
+    """
+    Stable fingerprint of selected table structures (columns/PK/FK).
+    Used to detect drift vs a cached analysis.
+    """
+    parts: list[dict[str, Any]] = []
+    for t in tables:
+        name = t.get("name") or t.get("table") or ""
+        schema = t.get("schema_name")
+        cols = []
+        for c in t.get("columns") or []:
+            if isinstance(c, dict):
+                cols.append(
+                    {
+                        "name": c.get("name"),
+                        "type": str(c.get("type") or ""),
+                        "nullable": bool(c.get("nullable", True)),
+                        "primary_key": bool(c.get("primary_key", False)),
+                    }
+                )
+            else:
+                cols.append(
+                    {
+                        "name": getattr(c, "name", None),
+                        "type": str(getattr(c, "type", "") or ""),
+                        "nullable": bool(getattr(c, "nullable", True)),
+                        "primary_key": bool(getattr(c, "primary_key", False)),
+                    }
+                )
+        cols.sort(key=lambda x: str(x.get("name") or ""))
+        fks = []
+        for fk in t.get("foreign_keys") or []:
+            if isinstance(fk, dict):
+                fks.append(
+                    {
+                        "constrained_columns": list(fk.get("constrained_columns") or []),
+                        "referred_table": fk.get("referred_table"),
+                        "referred_columns": list(fk.get("referred_columns") or []),
+                    }
+                )
+            else:
+                fks.append(
+                    {
+                        "constrained_columns": list(getattr(fk, "constrained_columns", []) or []),
+                        "referred_table": getattr(fk, "referred_table", None),
+                        "referred_columns": list(getattr(fk, "referred_columns", []) or []),
+                    }
+                )
+        fks.sort(key=lambda x: (str(x.get("referred_table") or ""), str(x.get("constrained_columns"))))
+        parts.append(
+            {
+                "schema_name": schema,
+                "name": name,
+                "columns": cols,
+                "primary_key": list(t.get("primary_key") or []),
+                "foreign_keys": fks,
+            }
+        )
+    parts.sort(key=lambda x: f"{x.get('schema_name') or ''}.{x.get('name') or ''}".lower())
+    raw = json.dumps(parts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]

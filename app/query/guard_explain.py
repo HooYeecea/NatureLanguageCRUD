@@ -56,6 +56,16 @@ def explain_guard(message: str) -> dict[str, str]:
             "该表没有主键，不允许 update/delete。",
             "请先为表添加主键，或改用带明确主键条件的写入；插入不受此限制。",
         )
+    if "join type not allowed" in lower or "cross join" in lower or "join requires on" in lower:
+        return pack(
+            "当前仅允许带 ON/USING 的 INNER / LEFT / RIGHT JOIN。",
+            "请补上关联条件，避免 CROSS JOIN。",
+        )
+    if "aggregate not allowed" in lower or "window functions" in lower:
+        return pack(
+            "聚合仅支持 COUNT / SUM / AVG / MIN / MAX，且不支持窗口函数。",
+            "请改用上述聚合，或去掉 OVER (...)。",
+        )
     if "editing mutate sql" in lower or "when editing mutate" in lower:
         return pack(
             "编辑后的写入 SQL 暂不支持这种写法。",
