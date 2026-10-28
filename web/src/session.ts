@@ -17,6 +17,7 @@ export type PersistedChatItem = {
   afterRows?: Record<string, unknown>[]
   diffOperation?: string
   undoId?: string
+  emptyHints?: string[]
   rowCount?: number
   validationOk?: boolean | null
   validationNote?: string | null

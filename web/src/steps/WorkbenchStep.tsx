@@ -3,6 +3,7 @@ import { api } from '../api'
 import { downloadCsv } from '../csv'
 import { friendlyError } from '../errors'
 import type { PersistedChatItem } from '../session'
+import { emptyResultHints } from '../emptyHints'
 import { suggestPrompts } from '../suggestPrompts'
 import type {
   ChatTurn,
@@ -87,7 +88,11 @@ export function WorkbenchStep({
     onModeChange?.(next)
   }
 
-  function appendQueryResult(result: QueryResult, sqlLabel: string) {
+  function appendQueryResult(
+    result: QueryResult,
+    sqlLabel: string,
+    userPrompt?: string,
+  ) {
     const next: ChatItem[] = []
     if (result.sql) {
       next.push({
@@ -116,11 +121,18 @@ export function WorkbenchStep({
         limit: result.limit,
       })
     } else if (result.sql) {
+      const hints = emptyResultHints({
+        userPrompt,
+        sql: result.sql,
+        tables: result.tables,
+        limit: result.limit ?? undefined,
+      })
       next.push({
         role: 'assistant',
         kind: 'result',
         text: result.reply || result.explanation || '查询完成，没有返回数据。',
         rowCount: result.row_count ?? 0,
+        emptyHints: hints,
       })
     } else {
       next.push({
@@ -182,10 +194,9 @@ export function WorkbenchStep({
     return next
   }
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault()
-    if (!prompt.trim()) return
-    const userText = prompt.trim()
+  async function sendPrompt(raw: string) {
+    const userText = raw.trim()
+    if (!userText || busy) return
     const history = buildHistory()
     setPrompt('')
     setItems((prev) => [...prev, { role: 'user', kind: 'text', text: userText }])
@@ -196,7 +207,7 @@ export function WorkbenchStep({
       if (mode === 'query') {
         const result: QueryResult = await api.nlQuery(connection.id, userText, { history })
         const label = result.retried ? '已校验并改写 SQL' : '已转换为 SQL'
-        setItems((prev) => [...prev, ...appendQueryResult(result, label)])
+        setItems((prev) => [...prev, ...appendQueryResult(result, label, userText)])
       } else {
         const preview = await api.nlMutate(connection.id, userText, history)
         setPending(preview.blocked ? null : preview)
@@ -212,6 +223,11 @@ export function WorkbenchStep({
     } finally {
       setBusy(false)
     }
+  }
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault()
+    await sendPrompt(prompt)
   }
 
   async function runEditedSql(sql: string) {
@@ -444,6 +460,22 @@ export function WorkbenchStep({
                 afterRows={item.afterRows || []}
               />
             )}
+            {item.emptyHints && item.emptyHints.length > 0 && (
+              <div className="suggest-prompts empty-hints" aria-label="空结果建议">
+                <span className="muted small">没有数据，可以试试：</span>
+                {item.emptyHints.map((h) => (
+                  <button
+                    key={h}
+                    type="button"
+                    className="suggest-chip"
+                    disabled={busy}
+                    onClick={() => void sendPrompt(h)}
+                  >
+                    {h}
+                  </button>
+                ))}
+              </div>
+            )}
             {item.rows && item.rows.length > 0 && (
               <div className="result-block">
                 <div className="result-toolbar">
@@ -551,14 +583,14 @@ export function WorkbenchStep({
 
       {prompts.length > 0 && !pending && (
         <div className="suggest-prompts" aria-label="推荐问法">
-          <span className="muted small">试试：</span>
+          <span className="muted small">试试（点击直接发送）：</span>
           {prompts.map((p) => (
             <button
               key={p}
               type="button"
               className="suggest-chip"
               disabled={busy}
-              onClick={() => setPrompt(p)}
+              onClick={() => void sendPrompt(p)}
             >
               {p}
             </button>

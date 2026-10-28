@@ -118,15 +118,21 @@ export const api = {
       schema_name?: string | null
       secret_columns?: string[]
     }>,
+    permissions: {
+      allow_select?: boolean
+      allow_insert?: boolean
+      allow_update?: boolean
+      allow_delete?: boolean
+    } = {},
   ) =>
     request<AccessPolicy>(`/api/connections/${id}/workspace/tables`, {
       method: 'PUT',
       body: JSON.stringify({
         tables,
-        allow_select: true,
-        allow_insert: true,
-        allow_update: true,
-        allow_delete: false,
+        allow_select: permissions.allow_select ?? true,
+        allow_insert: permissions.allow_insert ?? true,
+        allow_update: permissions.allow_update ?? true,
+        allow_delete: permissions.allow_delete ?? false,
       }),
     }),
 

@@ -18,6 +18,9 @@ export function SelectTablesStep({ connection, onBack, onNext }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [secrets, setSecrets] = useState<Record<string, Set<string>>>({})
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [allowInsert, setAllowInsert] = useState(true)
+  const [allowUpdate, setAllowUpdate] = useState(true)
+  const [allowDelete, setAllowDelete] = useState(false)
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -40,6 +43,10 @@ export function SelectTablesStep({ connection, onBack, onNext }: Props) {
             nextSelected.add(k)
             nextSecrets[k] = new Set(tp.secret_columns || [])
           }
+          // Restore global write flags from current policy (OR across tables).
+          setAllowInsert(policy.tables.some((t) => t.allow_insert !== false))
+          setAllowUpdate(policy.tables.some((t) => t.allow_update !== false))
+          setAllowDelete(policy.tables.some((t) => !!t.allow_delete))
         } else if (s.tables.length <= 8) {
           for (const t of s.tables) nextSelected.add(keyOf(t.schema_name, t.name))
         }
@@ -160,7 +167,12 @@ export function SelectTablesStep({ connection, onBack, onNext }: Props) {
     setBusy(true)
     setError(null)
     try {
-      await api.selectTables(connection.id, selectedList)
+      await api.selectTables(connection.id, selectedList, {
+        allow_select: true,
+        allow_insert: allowInsert,
+        allow_update: allowUpdate,
+        allow_delete: allowDelete,
+      })
       onNext(
         schema,
         selectedList.map(({ table, schema_name }) => ({ table, schema_name })),
@@ -178,7 +190,7 @@ export function SelectTablesStep({ connection, onBack, onNext }: Props) {
         <h2>选择要操作的表</h2>
         <p>
           连接 <strong>{connection.name}</strong>（{connection.dialect}）。可多选，后续
-          NL 操作仅在此范围内。展开已选表可勾选<strong>敏感列</strong>（样例/查询/回读会脱敏）。
+          NL 操作仅在此范围内。可开关写入权限；展开已选表可勾选<strong>敏感列</strong>。
         </p>
       </header>
 
@@ -210,6 +222,41 @@ export function SelectTablesStep({ connection, onBack, onNext }: Props) {
                 清空
               </button>
             </div>
+          </div>
+
+          <div className="perm-bar" aria-label="写入权限">
+            <span className="muted small">已选表权限：</span>
+            <label className="perm-chip">
+              <input type="checkbox" checked disabled />
+              查询
+            </label>
+            <label className={`perm-chip ${allowInsert ? 'on' : ''}`}>
+              <input
+                type="checkbox"
+                checked={allowInsert}
+                onChange={(e) => setAllowInsert(e.target.checked)}
+              />
+              新增
+            </label>
+            <label className={`perm-chip ${allowUpdate ? 'on' : ''}`}>
+              <input
+                type="checkbox"
+                checked={allowUpdate}
+                onChange={(e) => setAllowUpdate(e.target.checked)}
+              />
+              更新
+            </label>
+            <label className={`perm-chip ${allowDelete ? 'on warn' : ''}`}>
+              <input
+                type="checkbox"
+                checked={allowDelete}
+                onChange={(e) => setAllowDelete(e.target.checked)}
+              />
+              删除
+            </label>
+            {allowDelete && (
+              <span className="muted small">删除需预览确认，成功后短时可撤销</span>
+            )}
           </div>
 
           {filtered.length === 0 ? (

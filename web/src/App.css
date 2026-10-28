@@ -900,6 +900,46 @@ td {
   margin-top: 0.85rem;
 }
 
+.empty-hints {
+  margin-top: 0.55rem;
+  padding-top: 0.35rem;
+}
+
+.perm-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0 0 0.85rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 10px;
+  background: #f7faf9;
+  border: 1px solid #d7e6e1;
+}
+
+.perm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+.perm-chip.on {
+  border-color: #9ec9c0;
+  background: #eef8f4;
+}
+
+.perm-chip.warn,
+.perm-chip.on.warn {
+  border-color: #e0a58a;
+  background: #fff4ec;
+}
+
 .suggest-chip {
   border: 1px solid var(--line);
   background: #fff;
