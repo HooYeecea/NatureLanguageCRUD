@@ -6,8 +6,12 @@ from dotenv import load_dotenv
 ROOT_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT_DIR / ".env")
 
-META_DB_PATH = ROOT_DIR / "workbench.db"
-DEMO_DB_PATH = ROOT_DIR / "demo.db"
+# Optional data directory (Docker volume). Defaults to project root.
+_DATA_DIR = Path(os.getenv("WORKBENCH_DATA_DIR") or ROOT_DIR)
+_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+META_DB_PATH = _DATA_DIR / "workbench.db"
+DEMO_DB_PATH = _DATA_DIR / "demo.db"
 
 WORKBENCH_ENV = (os.getenv("WORKBENCH_ENV") or "development").strip().lower()
 SECRET_KEY = os.getenv("WORKBENCH_SECRET_KEY", "dev-only-change-me")

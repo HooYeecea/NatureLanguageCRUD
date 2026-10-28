@@ -32,6 +32,9 @@
 - **受控 JOIN / 聚合**：INNER/LEFT/RIGHT JOIN（需 ON）；COUNT/SUM/AVG/MIN/MAX + GROUP BY
 - **Schema 漂移检测**：指纹比对选表结构，变化时自动重新解读
 - **可撤销删除**：DELETE 后短时保留主键快照，可通过 `mutate/undo` 恢复
+- **一键推荐 / 空结果引导**：推荐问法点击即发送；0 行时给出可点改写建议
+- **选表权限开关**：选表步骤可开/关新增、更新、删除
+- **Docker Compose + CI**：`docker compose up` 起 API+UI；GitHub Actions 跑 pytest 与前端构建
 - **CSV 导出**：查询结果可下载；打到 `LIMIT` 时明确提示已截断
 
 - **工作区恢复**：向导与聊天刷新后尽量保留（`sessionStorage`）
@@ -94,6 +97,16 @@ npm run dev
 
 浏览器打开 http://127.0.0.1:5173  
 Vite 已将 `/api` 代理到后端 `8000` 端口。
+
+### 或：Docker Compose
+
+```bash
+copy .env.example .env   # 填入 LLM_API_KEY / 密钥
+docker compose up --build
+```
+
+- 界面：http://127.0.0.1:5173  
+- API：http://127.0.0.1:8000  
 
 ### 3. 配置大模型与密钥
 

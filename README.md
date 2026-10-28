@@ -32,6 +32,9 @@ Natural-language workbench for relational databases. Connect your DB, pick table
 - **Guarded JOIN / aggregates**: INNER/LEFT/RIGHT JOIN with ON; COUNT/SUM/AVG/MIN/MAX + GROUP BY
 - **Schema drift detection**: fingerprint selected tables; auto re-interpret when structure changes
 - **Undo delete**: short-lived PK snapshot after DELETE; restore via `mutate/undo`
+- **One-click prompts / empty hints**: suggested chips submit immediately; zero-row queries offer rewrite tips
+- **Write permission toggles**: enable insert/update/delete on the select-tables step
+- **Docker Compose + CI**: `docker compose up` for API+UI; GitHub Actions runs pytest and frontend build
 - **CSV export**: download query results; LIMIT truncation is called out in the UI
 - **Workspace restore**: wizard + chat survive refresh via `sessionStorage`
 - **Schema analysis cache**: reuse relationship interpretation; optional re-analyze with LLM
@@ -93,6 +96,16 @@ npm run dev
 
 Open http://127.0.0.1:5173  
 Vite proxies `/api` to the backend on port `8000`.
+
+### Or: Docker Compose
+
+```bash
+copy .env.example .env   # set LLM_API_KEY / secrets
+docker compose up --build
+```
+
+- UI: http://127.0.0.1:5173  
+- API: http://127.0.0.1:8000  
 
 ### 3. Configure LLM and secrets
 
