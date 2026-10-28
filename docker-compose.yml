@@ -1,0 +1,35 @@
+services:
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      WORKBENCH_ENV: ${WORKBENCH_ENV:-development}
+      WORKBENCH_DATA_DIR: /app/data
+      WORKBENCH_SECRET_KEY: ${WORKBENCH_SECRET_KEY:-dev-compose-change-me-16}
+      WORKBENCH_API_KEY: ${WORKBENCH_API_KEY:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+    volumes:
+      # Persist meta + demo SQLite across restarts
+      - workbench-data:/app/data
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+
+  web:
+    build: ./web
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  workbench-data:
