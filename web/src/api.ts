@@ -20,7 +20,8 @@ const WORKBENCH_API_KEY_STORAGE = 'nlcrud.workbenchApiKey'
 
 export function getWorkbenchApiKey(): string {
   try {
-    return localStorage.getItem(WORKBENCH_API_KEY_STORAGE) || ''
+    localStorage.removeItem(WORKBENCH_API_KEY_STORAGE)
+    return sessionStorage.getItem(WORKBENCH_API_KEY_STORAGE) || ''
   } catch {
     return ''
   }
@@ -29,8 +30,9 @@ export function getWorkbenchApiKey(): string {
 export function setWorkbenchApiKey(key: string): void {
   try {
     const trimmed = key.trim()
-    if (trimmed) localStorage.setItem(WORKBENCH_API_KEY_STORAGE, trimmed)
-    else localStorage.removeItem(WORKBENCH_API_KEY_STORAGE)
+    localStorage.removeItem(WORKBENCH_API_KEY_STORAGE)
+    if (trimmed) sessionStorage.setItem(WORKBENCH_API_KEY_STORAGE, trimmed)
+    else sessionStorage.removeItem(WORKBENCH_API_KEY_STORAGE)
   } catch {
     /* private mode */
   }

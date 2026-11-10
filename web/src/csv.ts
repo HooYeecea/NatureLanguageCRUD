@@ -2,7 +2,9 @@
 
 function escapeCell(v: unknown): string {
   if (v === null || v === undefined) return ''
-  const s = typeof v === 'object' ? JSON.stringify(v) : String(v)
+  let s = typeof v === 'object' ? JSON.stringify(v) : String(v)
+  // CSV quoting alone does not stop spreadsheet formulas. Preserve real numbers.
+  if (typeof v !== 'number' && /^[\s\uFEFF]*[=+@-]/.test(s)) s = "'" + s
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`
   return s
 }

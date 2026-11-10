@@ -12,7 +12,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY main.py .
 
-ENV WORKBENCH_ENV=development \
+RUN useradd --create-home workbench && mkdir -p /app/data && chown -R workbench:workbench /app
+USER workbench
+
+ENV WORKBENCH_ENV=production \
     PYTHONUNBUFFERED=1
 
 EXPOSE 8000

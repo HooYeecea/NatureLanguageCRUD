@@ -2,13 +2,14 @@ services:
   backend:
     build: .
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env
     environment:
-      WORKBENCH_ENV: ${WORKBENCH_ENV:-development}
+      WORKBENCH_ENV: production
       WORKBENCH_DATA_DIR: /app/data
-      WORKBENCH_SECRET_KEY: ${WORKBENCH_SECRET_KEY:-dev-compose-change-me-16}
+      WORKBENCH_SECRET_KEY: ${WORKBENCH_SECRET_KEY:?Set a random encryption key}
+      WORKBENCH_ADMIN_API_KEY: ${WORKBENCH_ADMIN_API_KEY:?Set a separate random admin key}
       WORKBENCH_API_KEY: ${WORKBENCH_API_KEY:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
@@ -27,7 +28,7 @@ services:
   web:
     build: ./web
     ports:
-      - "5173:80"
+      - "127.0.0.1:5173:80"
     depends_on:
       - backend
 
