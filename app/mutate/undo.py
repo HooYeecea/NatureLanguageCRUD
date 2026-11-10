@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from app.meta_db import meta_conn
+from app import secure_payload
 
 DEFAULT_TTL_SECONDS = 10 * 60
 
@@ -32,6 +33,8 @@ def ensure_undo_table(conn) -> None:
         """
     )
 
+    secure_payload.maintain(conn, "undo_mutations", "rows_json", [])
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -46,6 +49,7 @@ def create_undo(
     rows: list[dict[str, Any]],
     primary_key: list[str],
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
+    status: str = "available",
 ) -> Optional[dict[str, Any]]:
     if not rows or not primary_key:
         return None
@@ -59,7 +63,7 @@ def create_undo(
             INSERT INTO undo_mutations (
                 id, connection_id, table_name, schema_name, dialect,
                 rows_json, primary_key_json, status, created_at, expires_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'available', ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 undo_id,
@@ -67,8 +71,9 @@ def create_undo(
                 table,
                 schema_name,
                 dialect,
-                json.dumps(rows, ensure_ascii=False),
+                secure_payload.dumps(rows),
                 json.dumps(list(primary_key), ensure_ascii=False),
+                status,
                 now.isoformat(),
                 expires.isoformat(),
             ),
@@ -91,7 +96,7 @@ def get_undo(undo_id: str) -> Optional[dict[str, Any]]:
         "table": row["table_name"],
         "schema_name": row["schema_name"],
         "dialect": row["dialect"],
-        "rows": json.loads(row["rows_json"]),
+        "rows": secure_payload.loads(row["rows_json"]),
         "primary_key": json.loads(row["primary_key_json"]),
         "status": row["status"],
         "created_at": datetime.fromisoformat(row["created_at"]),
@@ -162,3 +167,13 @@ def mark_undo_failed(undo_id: str) -> None:
             """,
             (undo_id,),
         )
+
+
+def activate_undo(undo_id: str) -> None:
+    with meta_conn() as conn:
+        conn.execute("UPDATE undo_mutations SET status='available' WHERE id=? AND status='preparing'", (undo_id,))
+
+
+def discard_undo(undo_id: str) -> None:
+    with meta_conn() as conn:
+        conn.execute("DELETE FROM undo_mutations WHERE id=? AND status='preparing'", (undo_id,))

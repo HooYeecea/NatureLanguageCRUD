@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from sqlalchemy import text
+from sqlalchemy import text, Table, MetaData, select, and_
 from sqlalchemy.engine import Engine
 from sqlglot import exp
 
@@ -18,7 +18,7 @@ def _fetch_dicts(conn, sql: str, limit: int = 50) -> list[dict[str, Any]]:
     result = conn.execute(text(sql))
     keys = list(result.keys())
     rows = []
-    for i, row in enumerate(result.fetchall()):
+    for i, row in enumerate(result.fetchmany(limit)):
         if i >= limit:
             break
         rows.append({k: _jsonable(v) for k, v in zip(keys, row)})
@@ -29,9 +29,8 @@ def preview_plan(engine: Engine, plan: MutatePlan, *, max_rows: int) -> dict[str
     """
     Preview mutation impact.
 
-    For update/delete: run count + sample, then dry-run the DML inside a
-    transaction that always rolls back — so concurrent readers see no change
-    and the SQL is verified before confirm.
+    Only count and sample. DML runs exclusively during confirmation because
+    triggers and non-transactional side effects cannot reliably be rolled back.
     """
     if plan.operation == "insert":
         return {
@@ -61,20 +60,7 @@ def preview_plan(engine: Engine, plan: MutatePlan, *, max_rows: int) -> dict[str
             if plan.preview_sql and affected > 0:
                 sample_rows = _fetch_dicts(conn, plan.preview_sql)
 
-            # Dry-run write then roll back (same snapshot as count/sample).
-            result = conn.execute(text(plan.sql))
-            live = result.rowcount
-            if live is not None and int(live) >= 0:
-                affected = int(live)
-                if affected > max_rows:
-                    return {
-                        "affected_count": affected,
-                        "sample_rows": [],
-                        "blocked": True,
-                        "block_reason": (
-                            f"Affected rows ({affected}) exceed max_rows_per_mutation ({max_rows})"
-                        ),
-                    }
+            # Never execute DML in previews: triggers may have external side effects.
 
             return {
                 "affected_count": affected,
@@ -87,28 +73,64 @@ def preview_plan(engine: Engine, plan: MutatePlan, *, max_rows: int) -> dict[str
                 trans.rollback()
 
 
-def execute_plan(engine: Engine, plan: MutatePlan) -> dict[str, Any]:
+def execute_plan(engine: Engine, plan: MutatePlan, *, max_rows: int = 100,
+                 ack_threshold: int = 10, ack_large_impact: bool = False,
+                 snapshot_writer=None) -> dict[str, Any]:
+    """Lock and bound the complete target set; commit only after all checks pass."""
+    from app.query.sql_guard import SqlGuardError
+    import sqlglot
+    with engine.connect() as conn:
+        if engine.dialect.name == "sqlite":
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
+        else:
+            conn = conn.execution_options(isolation_level="SERIALIZABLE")
+            conn.begin()
+        try:
+            tbl = Table(plan.table, MetaData(), schema=plan.schema_name, autoload_with=conn)
+            if plan.operation == "insert":
+                result = conn.execute(tbl.insert().values(**(plan.values or {})))
+                output = {"rowcount": 1, "lastrowid": getattr(result, "lastrowid", None), "before_rows": []}
+            else:
+                pk = [c.name for c in tbl.primary_key]
+                if not pk:
+                    raise SqlGuardError("UPDATE/DELETE requires a table primary key")
+                dialect = {"postgresql": "postgres", "mssql": "tsql"}.get(engine.dialect.name, engine.dialect.name)
+                where = sqlglot.parse_one(plan.count_sql, read=dialect).args.get("where")
+                stmt = select(tbl).limit(max_rows + 1)
+                if where is not None:
+                    stmt = stmt.where(text(where.this.sql(dialect=dialect)))
+                if engine.dialect.name == "mssql":
+                    stmt = stmt.with_hint(tbl, "WITH (UPDLOCK, HOLDLOCK)", dialect_name="mssql")
+                elif engine.dialect.name != "sqlite":
+                    stmt = stmt.with_for_update()
+                before_rows = [dict(row) for row in conn.execute(stmt).mappings()]
+                count = len(before_rows)
+                if count > max_rows:
+                    raise SqlGuardError("Affected rows exceed max_rows_per_mutation")
+                if count >= ack_threshold and not ack_large_impact:
+                    raise SqlGuardError("Live affected rows require large-impact acknowledgement")
+                for row in before_rows:
+                    predicate = and_(*(tbl.c[k] == row[k] for k in pk))
+                    write = tbl.delete().where(predicate) if plan.operation == "delete" else tbl.update().where(predicate).values(**(plan.set_values or {}))
+                    result = conn.execute(write)
+                    if result.rowcount not in (-1, 0, 1):
+                        raise SqlGuardError("Unexpected affected row count; transaction rolled back")
+                output = {"rowcount": count, "lastrowid": None, "before_rows": before_rows}
+                if plan.operation == "delete" and count and snapshot_writer:
+                    output["undo_id"] = snapshot_writer(before_rows, pk)
+            conn.commit()
+            return output
+        except BaseException:
+            conn.rollback()
+            raise
+
+
+def restore_rows(engine: Engine, table_name: str, schema_name, rows: list[dict]) -> None:
+    """All rows are restored, or none are; no partially committed undo."""
     with engine.begin() as conn:
-        before_rows: list[dict[str, Any]] = []
-        if plan.operation in ("update", "delete") and plan.preview_sql:
-            before_rows = _fetch_dicts(conn, plan.preview_sql)
-
-        if plan.operation == "insert":
-            result = conn.execute(text(plan.sql))
-            return {
-                "rowcount": result.rowcount if result.rowcount is not None else 1,
-                "lastrowid": getattr(result, "lastrowid", None),
-                "before_rows": [],
-            }
-
-        count_row = conn.execute(text(plan.count_sql)).fetchone()
-        affected = int(count_row[0]) if count_row is not None else 0
-        result = conn.execute(text(plan.sql))
-        return {
-            "rowcount": result.rowcount if result.rowcount is not None else affected,
-            "lastrowid": None,
-            "before_rows": before_rows,
-        }
+        tbl = Table(table_name, MetaData(), schema=schema_name, autoload_with=conn)
+        for row in rows:
+            conn.execute(tbl.insert().values(**row))
 
 
 def _insert_readback_sql(plan: MutatePlan, dialect: str, lastrowid: Any) -> Optional[str]:

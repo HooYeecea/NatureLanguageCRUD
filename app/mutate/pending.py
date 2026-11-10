@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from app.meta_db import meta_conn
+from app import secure_payload
 
 DEFAULT_TTL_SECONDS = 10 * 60
 
@@ -27,6 +28,8 @@ def ensure_pending_table(conn) -> None:
         )
         """
     )
+
+    secure_payload.maintain(conn, "pending_mutations", "plan_json", {})
 
 
 def _utcnow() -> datetime:
@@ -53,7 +56,7 @@ def create_pending(
             (
                 pending_id,
                 connection_id,
-                json.dumps(plan, ensure_ascii=False),
+                secure_payload.dumps(plan),
                 now.isoformat(),
                 expires.isoformat(),
             ),
@@ -73,7 +76,7 @@ def get_pending(pending_id: str) -> Optional[dict[str, Any]]:
     return {
         "id": row["id"],
         "connection_id": row["connection_id"],
-        "plan": json.loads(row["plan_json"]),
+        "plan": secure_payload.loads(row["plan_json"]),
         "status": row["status"],
         "created_at": datetime.fromisoformat(row["created_at"]),
         "expires_at": datetime.fromisoformat(row["expires_at"]),

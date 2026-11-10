@@ -36,6 +36,7 @@ class MutatePlan:
     filters: list[dict[str, Any]] = field(default_factory=list)
     values: Optional[dict[str, Any]] = None
     set_values: Optional[dict[str, Any]] = None
+    primary_key: list[str] = field(default_factory=list)
 
 
 def _dialect(dialect: str) -> str:
@@ -125,11 +126,14 @@ def _assert_filter_columns(
         tp = find_table_policy(policy, table, schema_name)
         if not tp:
             raise SqlGuardError(reason or "Table not in whitelist")
-        denied = set(tp.get("denied_columns") or [])
+        from app.db.redact import should_redact_column
+        if should_redact_column(col, set(tp.get("secret_columns") or [])):
+            raise SqlGuardError("Sensitive columns cannot be used as mutation filters")
+        denied = {c.casefold() for c in (tp.get("denied_columns") or [])}
         allowed = tp.get("allowed_columns")
-        if col in denied:
+        if col.casefold() in denied:
             raise SqlGuardError(f"Filter column denied: {col}")
-        if allowed is not None and col not in allowed:
+        if allowed is not None and col.casefold() not in {c.casefold() for c in allowed}:
             raise SqlGuardError(f"Filter column not in whitelist: {col}")
 
 
@@ -268,7 +272,10 @@ def build_mutate_plan(
         cols = effective_columns(tp, all_columns=tp.get("allowed_columns") or [])
         if tp.get("allowed_columns") is not None:
             cols = [c for c in (tp.get("allowed_columns") or []) if c not in set(tp.get("denied_columns") or [])]
-        if cols:
+        if not cols:
+            preview_q = exp.select(exp.alias_(exp.Literal.number(1), "matched")).from_(_table_exp(table, schema_name))
+            preview_q = _apply_filters(preview_q, filters).limit(preview_limit)
+        else:
             preview_q = exp.select(*[exp.column(c) for c in cols]).from_(
                 _table_exp(table, schema_name)
             )
@@ -284,4 +291,5 @@ def build_mutate_plan(
         filters=filters,
         values=None,
         set_values=set_values,
+        primary_key=list(primary_key or []),
     )
