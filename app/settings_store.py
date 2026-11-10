@@ -9,6 +9,7 @@ from typing import Any, Optional
 from app.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 from app.crypto import decrypt_secret, encrypt_secret
 from app.meta_db import meta_conn
+from app.security import validate_llm_url
 
 
 def ensure_settings_table(conn) -> None:
@@ -48,10 +49,14 @@ def get_llm_settings() -> dict[str, Any]:
             api_key = decrypt_secret(api_key_enc)
         except ValueError:
             api_key = ""
-    if not api_key:
+    if not api_key and not stored.get("disable_env_key"):
         api_key = LLM_API_KEY or ""
 
     base_url = stored.get("base_url") or LLM_BASE_URL or "https://api.deepseek.com"
+    base_url = validate_llm_url(base_url)
+    # An environment key belongs only to its environment endpoint.
+    if not api_key_enc and base_url != LLM_BASE_URL.rstrip("/"):
+        api_key = ""
     model = stored.get("model") or LLM_MODEL or "deepseek-chat"
 
     return {
@@ -73,8 +78,16 @@ def update_llm_settings(
 ) -> dict[str, Any]:
     stored = _get_raw()
 
+    if base_url is not None and base_url.strip():
+        base_url = validate_llm_url(base_url.strip())
+        old_url = stored.get("base_url") or LLM_BASE_URL
+        if base_url != old_url.rstrip("/"):
+            stored.pop("api_key_enc", None)
+            stored["disable_env_key"] = True
+
     if clear_api_key:
         stored.pop("api_key_enc", None)
+        stored["disable_env_key"] = True
     elif api_key is not None and api_key.strip():
         # Empty string means "keep existing" when client sends blank intentionally
         stored["api_key_enc"] = encrypt_secret(api_key.strip())

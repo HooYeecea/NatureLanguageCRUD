@@ -54,9 +54,15 @@ def write_audit(
 ) -> dict[str, Any]:
     log_id = str(uuid.uuid4())
     now = _utcnow()
-    safe_detail = detail or {}
-    # Never persist secrets if caller accidentally passes them
-    safe_detail.pop("password", None)
+    # Keep structural metadata only. SQL literals, prompts, replies, error messages,
+    # nested payloads and unknown future fields must never become an alternate data API.
+    permitted = {"preview_id", "undo_id", "operation", "table", "tables", "limit",
+                 "dry_run", "row_count", "rowcount", "affected_count", "blocked",
+                 "requires_ack", "table_count", "max_rows_per_mutation", "max_rows_per_query",
+                 "changed_row_count", "before_row_count", "restored_count", "configured",
+                 "allow_select", "allow_insert", "allow_update", "allow_delete", "cleared"}
+    safe_detail = {k: v for k, v in (detail or {}).items() if k in permitted}
+    summary = f"{action}: {status}"
     with meta_conn() as conn:
         ensure_audit_table(conn)
         conn.execute(

@@ -9,6 +9,8 @@ from urllib.parse import quote_plus
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.pool import StaticPool
+from app.security import validate_connection
 
 
 DEFAULT_PORTS = {
@@ -22,6 +24,7 @@ _LOCK = threading.Lock()
 
 
 def build_url(cfg: dict[str, Any]) -> str:
+    cfg = validate_connection(cfg)
     dialect = cfg["dialect"]
     password = cfg.get("password") or ""
     username = cfg.get("username") or ""
@@ -49,9 +52,11 @@ def build_url(cfg: dict[str, Any]) -> str:
 
     if dialect == "sqlserver":
         driver = options.get("driver") or "ODBC Driver 18 for SQL Server"
+        def odbc_value(value):
+            return "{" + str(value).replace("}", "}}") + "}"
         odbc = (
-            f"DRIVER={{{driver}}};SERVER={host},{port};DATABASE={database};"
-            f"UID={username};PWD={password};TrustServerCertificate=yes;"
+            f"DRIVER={odbc_value(driver)};SERVER={odbc_value(f'{host},{port}')};DATABASE={odbc_value(database)};"
+            f"UID={odbc_value(username)};PWD={odbc_value(password)};Encrypt=yes;TrustServerCertificate=no;"
         )
         return f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc)}"
 
@@ -63,6 +68,8 @@ def create_db_engine(cfg: dict[str, Any], *, echo: bool = False) -> Engine:
     connect_args: dict[str, Any] = {}
     if cfg["dialect"] == "sqlite":
         connect_args["check_same_thread"] = False
+        if url == "sqlite:///:memory:":
+            return create_engine(url, echo=echo, connect_args=connect_args, poolclass=StaticPool)
     return create_engine(
         url,
         echo=echo,
@@ -93,6 +100,7 @@ def engine_fingerprint(cfg: dict[str, Any]) -> str:
 def get_pooled_engine(cfg: dict[str, Any], *, echo: bool = False) -> Engine:
     """Reuse engines across requests (do not dispose after each call)."""
     key = engine_fingerprint(cfg)
+    cfg = validate_connection(cfg)
     with _LOCK:
         engine = _POOL.get(key)
         if engine is None:

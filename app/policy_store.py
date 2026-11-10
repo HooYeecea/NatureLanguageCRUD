@@ -98,6 +98,6 @@ def find_table_policy(
         if item.get("table") != table:
             continue
         item_schema = item.get("schema_name")
-        if schema_name is None or item_schema is None or item_schema == schema_name:
+        if item_schema == schema_name:
             return item
     return None

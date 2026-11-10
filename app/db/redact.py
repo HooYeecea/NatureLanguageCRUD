@@ -50,7 +50,7 @@ def secret_columns_for_tables(
 
 
 def should_redact_column(name: str, secret_columns: Optional[set[str]] = None) -> bool:
-    if secret_columns and name in secret_columns:
+    if secret_columns and name.casefold() in {c.casefold() for c in secret_columns}:
         return True
     return is_sensitive_column_name(name)
 
@@ -72,3 +72,15 @@ def redact_rows(
     secret_columns: Optional[set[str]] = None,
 ) -> list[dict[str, Any]]:
     return [redact_row(r, secret_columns=secret_columns) for r in rows]
+
+
+def visible_rows(rows: list[dict], policy: dict, table: str, schema_name=None) -> list[dict]:
+    """Apply read permissions even to mutation previews and read-back responses."""
+    from app.policy import effective_columns
+    from app.query.executor import _jsonable
+    tp = find_table_policy(policy, table, schema_name)
+    if not tp or not tp.get("allow_select"):
+        return []
+    secrets = set(tp.get("secret_columns") or [])
+    return [redact_row({k: _jsonable(row[k]) for k in effective_columns(tp, all_columns=list(row))},
+                       secret_columns=secrets) for row in rows]

@@ -79,6 +79,12 @@ def get_settings():
 
 @router.put("/api/settings", response_model=SettingsOut)
 def put_settings(body: SettingsUpdate):
+    from app.security import validate_llm_url
+    if body.base_url:
+        try:
+            validate_llm_url(body.base_url)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     cfg = update_llm_settings(
         api_key=body.api_key,
         base_url=body.base_url,

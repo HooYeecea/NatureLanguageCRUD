@@ -34,7 +34,7 @@ def effective_columns(
     - allowed_columns None => all_columns (or requested) minus denied
     - allowed_columns set => intersection with allowed, minus denied
     """
-    denied = set(table_policy.get("denied_columns") or [])
+    denied = {c.casefold() for c in (table_policy.get("denied_columns") or [])}
     allowed = table_policy.get("allowed_columns")
 
     if requested is not None:
@@ -47,10 +47,10 @@ def effective_columns(
         base = []
 
     if allowed is not None:
-        allowed_set = set(allowed)
-        base = [c for c in base if c in allowed_set]
+        allowed_set = {c.casefold() for c in allowed}
+        base = [c for c in base if c.casefold() in allowed_set]
 
-    return [c for c in base if c not in denied]
+    return [c for c in base if c.casefold() not in denied]
 
 
 def check_access(
@@ -72,12 +72,12 @@ def check_access(
     cols = effective_columns(table_policy, columns, all_columns)
 
     if columns:
-        denied = set(table_policy.get("denied_columns") or [])
+        denied = {c.casefold() for c in (table_policy.get("denied_columns") or [])}
         allowed = table_policy.get("allowed_columns")
         for col in columns:
-            if col in denied:
+            if col.casefold() in denied:
                 return False, f"Column denied: {col}", None
-            if allowed is not None and col not in allowed:
+            if allowed is not None and col.casefold() not in {c.casefold() for c in allowed}:
                 return False, f"Column not in whitelist: {col}", None
 
     return True, None, cols

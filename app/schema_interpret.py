@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from openai import OpenAI
+import httpx
 
 from app.settings_store import get_llm_settings
 
@@ -99,7 +100,7 @@ def interpret_schema(
             }
         )
 
-    client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"] or None)
+    client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"] or None, timeout=30.0, max_retries=1, http_client=httpx.Client(follow_redirects=False, trust_env=False, timeout=30.0))
     response = client.chat.completions.create(
         model=cfg["model"],
         messages=[

@@ -78,20 +78,12 @@ def _allowed_columns(table_info: dict[str, Any], policy: Optional[dict[str, Any]
             cols.append(name)
     if not policy:
         return cols
-    allowed_tables = {t.get("table"): t for t in (policy.get("tables") or [])}
-    tp = allowed_tables.get(table_info.get("name"))
-    if not tp:
-        return cols
-    denied = set(tp.get("denied_columns") or [])
-    allow = tp.get("allowed_columns")
-    out = []
-    for name in cols:
-        if name in denied:
-            continue
-        if allow is not None and name not in allow:
-            continue
-        out.append(name)
-    return out
+    from app.policy_store import find_table_policy
+    from app.policy import effective_columns
+    tp = find_table_policy(policy, table_info.get("name"), table_info.get("schema_name"))
+    if not tp or not tp.get("allow_select"):
+        return []
+    return effective_columns(tp, all_columns=cols)
 
 
 def _set_sample_timeout(conn: Connection, dialect: str, seconds: int = SAMPLE_TIMEOUT_SEC) -> None:

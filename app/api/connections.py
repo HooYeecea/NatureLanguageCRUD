@@ -1,4 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from app import config
+from app.security import validate_connection
 
 from app import audit, meta_db
 from app.db.engines import get_pooled_engine, invalidate_pooled_engine, test_engine
@@ -20,13 +22,18 @@ def _to_out(data: dict) -> ConnectionOut:
 
 
 @router.get("", response_model=list[ConnectionOut])
-def list_connections():
-    return [_to_out(c) for c in meta_db.list_connections()]
+def list_connections(request: Request):
+    return [_to_out(c) for c in meta_db.list_connections()
+            if getattr(request.state, "is_admin", False) or c["id"] in config.WORKBENCH_CONNECTION_IDS]
 
 
 @router.post("", response_model=ConnectionOut, status_code=201)
 def create_connection(body: ConnectionCreate):
-    created = meta_db.create_connection(body.model_dump())
+    try:
+        payload = validate_connection(body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    created = meta_db.create_connection(payload)
     audit.write_audit(
         action="connection.create",
         status="success",
@@ -49,6 +56,11 @@ def get_connection(connection_id: str):
 def update_connection(connection_id: str, body: ConnectionUpdate):
     existing = meta_db.get_connection(connection_id, include_password=True)
     payload = body.model_dump(exclude_unset=True)
+    if existing:
+        try:
+            validate_connection({**existing, **payload})
+        except (ValueError, TypeError, KeyError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid or disallowed connection configuration") from exc
     updated = meta_db.update_connection(connection_id, payload)
     if not updated:
         raise HTTPException(status_code=404, detail="Connection not found")
