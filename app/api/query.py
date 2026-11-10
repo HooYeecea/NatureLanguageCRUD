@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from sqlalchemy import inspect
 
 from app import audit, meta_db, policy_store
 from app.analysis_store import analysis_context_text, get_analysis
@@ -79,7 +80,7 @@ def _run_guarded(
 
     engine = get_pooled_engine(get_engine_cfg(connection))
     try:
-        result = execute_select(engine, guarded.sql)
+        result = execute_select(engine, guarded.sql, max_rows=guarded.limit or 500)
     except Exception as exc:  # noqa: BLE001
         audit.write_audit(
             action=action,
@@ -88,7 +89,7 @@ def _run_guarded(
             summary="query execution failed",
             detail={"sql": guarded.sql, "error": str(exc), "prompt": prompt},
         )
-        raise HTTPException(status_code=400, detail=f"Query execution failed: {exc}") from exc
+        raise HTTPException(status_code=400, detail="Query execution failed or exceeded resource limits") from exc
 
     audit.write_audit(
         action=action,
@@ -134,6 +135,8 @@ def query_structured(connection_id: str, body: StructuredQueryRequest):
     connection = _load_connection(connection_id)
     policy = policy_store.get_policy(connection_id)
     try:
+        engine = get_pooled_engine(get_engine_cfg(connection))
+        all_columns = [c["name"] for c in inspect(engine).get_columns(body.table, schema=body.schema_name)]
         guarded = build_structured_select(
             dialect=connection["dialect"],
             policy=policy,
@@ -143,6 +146,7 @@ def query_structured(connection_id: str, body: StructuredQueryRequest):
             filters=[f.model_dump() for f in body.filters],
             order_by=[o.model_dump() for o in body.order_by],
             limit=body.limit,
+            all_columns=all_columns,
         )
     except SqlGuardError as exc:
         audit.write_audit(

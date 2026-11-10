@@ -10,6 +10,9 @@ from sqlglot import exp
 from sqlglot.errors import ParseError
 
 from app.policy import check_access
+from app.policy_store import find_table_policy
+from app.db.redact import should_redact_column, REDACTED
+from sqlglot.optimizer.scope import Scope, traverse_scope
 
 DIALECT_MAP = {
     "sqlite": "sqlite",
@@ -44,25 +47,8 @@ _ALLOWED_AGG = (exp.Count, exp.Sum, exp.Avg, exp.Min, exp.Max)
 
 
 def _assert_select_only(expression: exp.Expression) -> exp.Expression:
-    # Unwrap WITH
-    root = expression
-    if isinstance(root, exp.With):
-        root = root.this
-    if not isinstance(root, exp.Select):
-        # UNION etc.
-        if isinstance(root, exp.Union):
-            for part in root.flatten():
-                if isinstance(part, exp.Select):
-                    continue
-                if isinstance(part, exp.Union):
-                    continue
-            # Ensure all leaves are SELECT
-            for node in root.walk():
-                if isinstance(node, (exp.Insert, exp.Update, exp.Delete, exp.Create, exp.Drop, exp.Command)):
-                    raise SqlGuardError("Only SELECT queries are allowed")
-            _assert_select_features(expression)
-            return expression
-        raise SqlGuardError(f"Only SELECT queries are allowed, got: {type(root).__name__}")
+    if not isinstance(expression, (exp.Select, exp.Union)):
+        raise SqlGuardError(f"Only SELECT queries are allowed, got: {type(expression).__name__}")
 
     forbidden = (
         exp.Insert,
@@ -78,9 +64,6 @@ def _assert_select_only(expression: exp.Expression) -> exp.Expression:
     for node in expression.walk():
         if isinstance(node, forbidden):
             raise SqlGuardError(f"Forbidden SQL clause: {type(node).__name__}")
-        # SELECT ... INTO
-        if isinstance(node, exp.Table) and node.args.get("into"):
-            raise SqlGuardError("SELECT INTO is not allowed")
     _assert_select_features(expression)
     return expression
 
@@ -88,6 +71,21 @@ def _assert_select_only(expression: exp.Expression) -> exp.Expression:
 def _assert_select_features(expression: exp.Expression) -> None:
     """Allow INNER/LEFT/RIGHT JOIN + COUNT/SUM/AVG/MIN/MAX + GROUP BY; reject the rest."""
     for node in expression.walk():
+        if isinstance(node, (exp.Into, exp.Lock, exp.Dot, exp.Placeholder, exp.Parameter)):
+            raise SqlGuardError(f"SQL feature not allowed: {type(node).__name__}")
+        if isinstance(node, exp.Table) and (node.catalog or not isinstance(node.this, exp.Identifier)):
+            raise SqlGuardError("Catalog-qualified tables and table functions are not allowed")
+        if isinstance(node, exp.TableAlias) and node.args.get("columns"):
+            raise SqlGuardError("Renaming derived columns through a table alias is not allowed")
+        if isinstance(node, exp.Star) and any(node.args.values()):
+            raise SqlGuardError("Star modifiers are not allowed")
+        if isinstance(node, exp.Func) and type(node).__name__ not in {
+            "Count", "Sum", "Avg", "Min", "Max", "Coalesce", "Nullif", "Abs",
+            "Round", "Ceil", "Floor", "Lower", "Upper", "Length", "Substring",
+            "Trim", "Concat", "ConcatWs", "Cast", "TryCast", "Case", "If",
+            "Date", "CurrentDate", "CurrentTimestamp", "Extract",
+        }:
+            raise SqlGuardError(f"Function not allowed: {type(node).__name__}")
         if isinstance(node, exp.Join):
             side = str(node.args.get("side") or "").strip().lower()
             kind = str(node.args.get("kind") or "").strip().lower()
@@ -110,38 +108,85 @@ def _assert_select_features(expression: exp.Expression) -> None:
             raise SqlGuardError("Window functions are not allowed")
 
 
-def _collect_tables(expression: exp.Expression) -> list[tuple[Optional[str], str]]:
-    tables: list[tuple[Optional[str], str]] = []
-    for table in expression.find_all(exp.Table):
-        name = table.name
-        if not name:
-            continue
-        schema = table.db or None  # sqlglot uses db for schema in many dialects
-        tables.append((schema, name))
-    # unique preserve order
-    seen = set()
-    out = []
-    for item in tables:
-        if item not in seen:
-            seen.add(item)
-            out.append(item)
-    return out
+def _validate_scopes(expression: exp.Expression, policy: dict) -> list[tuple[Optional[str], str]]:
+    """Check every scope/branch and replace direct secret projections before execution.
 
-
-def _collect_columns(expression: exp.Expression) -> list[str]:
-    cols: list[str] = []
-    select = expression if isinstance(expression, exp.Select) else expression.find(exp.Select)
-    if not select:
-        return cols
-    for projection in select.expressions:
-        if isinstance(projection, exp.Star):
-            cols.append("*")
+    Without a database schema, ambiguous unqualified JOIN columns are checked against
+    every possible source. Unknown derived outputs and correlated references fail closed.
+    """
+    tables = []
+    for scope in traverse_scope(expression):
+        if not isinstance(scope.expression, (exp.Select, exp.Union)):
+            raise SqlGuardError("Unsupported query scope")
+        if isinstance(scope.expression, exp.Union):
             continue
-        # alias: x AS y -> use underlying column if simple
-        col = projection.find(exp.Column)
-        if col and col.name:
-            cols.append(col.name)
-    return cols
+        sources = scope.selected_sources
+        for _, source in sources.values():
+            if isinstance(source, exp.Table):
+                ok, reason, _ = check_access(policy, table=source.name,
+                    schema_name=source.db or None, operation="select")
+                if not ok:
+                    raise SqlGuardError(reason or "Access denied")
+                tables.append((source.db or None, source.name))
+
+        def validate_column(col: exp.Column) -> bool:
+            if col.db or col.catalog:
+                raise SqlGuardError("Use a table alias for qualified columns")
+            if not col.table and col.name in sources:
+                raise SqlGuardError("Whole-row references are not allowed")
+            candidates = [sources[col.table]] if col.table in sources else list(sources.values())
+            if col.table and col.table not in sources:
+                raise SqlGuardError("Unresolved or correlated column reference")
+            if not candidates:
+                raise SqlGuardError("Cannot resolve column source")
+            sensitive = False
+            for _, source in candidates:
+                if isinstance(source, exp.Table):
+                    ok, reason, _ = check_access(policy, table=source.name,
+                        schema_name=source.db or None, operation="select", columns=[col.name])
+                    if not ok:
+                        raise SqlGuardError(reason or "Column access denied")
+                    tp = find_table_policy(policy, source.name, source.db or None) or {}
+                    sensitive |= should_redact_column(col.name, set(tp.get("secret_columns") or []))
+                elif isinstance(source, Scope):
+                    if col.name not in source.expression.named_selects:
+                        raise SqlGuardError("Cannot resolve derived column source")
+                else:
+                    raise SqlGuardError("Unsupported column source")
+            return sensitive
+
+        for col in scope.columns:
+            if col.is_star:
+                continue
+            if validate_column(col):
+                projection = col.parent if isinstance(col.parent, exp.Alias) else col
+                if projection not in scope.expression.expressions:
+                    raise SqlGuardError("Sensitive columns cannot be used in expressions or predicates")
+                # Preserve the output name but never retrieve the underlying secret.
+                projection.replace(exp.alias_(exp.Literal.string(REDACTED), projection.alias_or_name, quoted=True))
+
+        for projection in scope.expression.expressions:
+            if not projection.is_star:
+                continue
+            if scope.parent is not None:
+                raise SqlGuardError("Derived queries must list explicit columns")
+            candidates = list(sources.values())
+            if isinstance(projection, exp.Column) and projection.table:
+                if projection.table not in sources:
+                    raise SqlGuardError("Unknown star qualifier")
+                candidates = [sources[projection.table]]
+            for _, source in candidates:
+                if not isinstance(source, exp.Table):
+                    raise SqlGuardError("Derived queries must list explicit columns")
+                tp = find_table_policy(policy, source.name, source.db or None) or {}
+                if tp.get("allowed_columns") is not None or tp.get("denied_columns") or tp.get("secret_columns"):
+                    raise SqlGuardError("SELECT * is not allowed with column restrictions; list explicit columns")
+        # USING columns are identifiers rather than exp.Column nodes.
+        for join in scope.expression.args.get("joins") or []:
+            for ident in join.args.get("using") or []:
+                if validate_column(exp.column(ident.name)):
+                    raise SqlGuardError("Sensitive JOIN columns are not allowed")
+    return list(dict.fromkeys(tables))
 
 
 def _current_limit(expression: exp.Expression) -> Optional[int]:
@@ -163,6 +208,8 @@ def _apply_limit(expression: exp.Expression, max_rows: int, dialect: str) -> tup
         raise SqlGuardError("Cannot apply LIMIT to non-SELECT query")
 
     current = _current_limit(expression)
+    if current is not None and current < 1:
+        raise SqlGuardError("LIMIT must be positive")
     effective = max_rows if current is None else min(current, max_rows)
 
     # Rebuild limit
@@ -210,51 +257,9 @@ def guard_select_sql(
     expression = expressions[0]
     expression = _assert_select_only(expression)
 
-    tables = _collect_tables(expression)
+    tables = _validate_scopes(expression, policy)
     if not tables:
         raise SqlGuardError("Could not determine target tables from SQL")
-
-    columns = _collect_columns(expression)
-    multi_table = len(tables) > 1
-    # Per-table access check. For JOIN / multi-table, only enforce table-level
-    # allow_select (column names may belong to only one of the tables).
-    for schema_name, table in tables:
-        # When SELECT *, don't pass columns so we only check table+op
-        if "*" in columns or multi_table:
-            cols_for_check = None
-        else:
-            cols_for_check = columns or None
-        ok, reason, _ = check_access(
-            policy,
-            table=table,
-            operation="select",
-            schema_name=schema_name,
-            columns=cols_for_check,
-        )
-        if not ok:
-            raise SqlGuardError(reason or "Access denied")
-
-    # Block SELECT * when any involved table has column allow/deny restrictions
-    if "*" in columns:
-        for schema_name, table in tables:
-            tp = None
-            for item in policy.get("tables") or []:
-                if item.get("table") != table:
-                    continue
-                if (
-                    schema_name is None
-                    or item.get("schema_name") is None
-                    or item.get("schema_name") == schema_name
-                ):
-                    tp = item
-                    break
-            if not tp:
-                continue
-            if tp.get("allowed_columns") is not None or tp.get("denied_columns"):
-                raise SqlGuardError(
-                    "SELECT * is not allowed when column whitelist/blacklist is configured; "
-                    "list explicit columns instead"
-                )
 
     max_rows = int(policy.get("max_rows_per_query") or 500)
     expression, effective_limit = _apply_limit(expression, max_rows, read_dialect)
@@ -277,6 +282,7 @@ def build_structured_select(
     filters: Optional[list[dict[str, Any]]] = None,
     order_by: Optional[list[dict[str, str]]] = None,
     limit: Optional[int] = None,
+    all_columns: Optional[list[str]] = None,
 ) -> GuardedQuery:
     """Build a parameterized-looking SELECT; values are literal-escaped via sqlglot."""
     ok, reason, effective_cols = check_access(
@@ -285,6 +291,7 @@ def build_structured_select(
         operation="select",
         schema_name=schema_name,
         columns=columns,
+        all_columns=all_columns,
     )
     if not ok:
         raise SqlGuardError(reason or "Access denied")
@@ -302,7 +309,7 @@ def build_structured_select(
     select_cols = columns or effective_cols
     if not select_cols:
         # all columns allowed (None whitelist) -> SELECT *
-        if table_policy and table_policy.get("allowed_columns") is None:
+        if table_policy and table_policy.get("allowed_columns") is None and not table_policy.get("denied_columns") and not table_policy.get("secret_columns"):
             projections: list[exp.Expression] = [exp.Star()]
         else:
             raise SqlGuardError("No selectable columns resolved")
@@ -362,4 +369,4 @@ def build_structured_select(
     query = query.limit(effective_limit)
 
     read_dialect = _sqlglot_dialect(dialect)
-    return GuardedQuery(sql=query.sql(dialect=read_dialect), tables=[table], limit=effective_limit)
+    return guard_select_sql(query.sql(dialect=read_dialect), dialect=dialect, policy=policy)

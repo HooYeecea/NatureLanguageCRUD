@@ -162,20 +162,20 @@ class StructuredQueryRequest(BaseModel):
 
 
 class RawSqlQueryRequest(BaseModel):
-    sql: str = Field(..., min_length=1)
+    sql: str = Field(..., min_length=1, max_length=32000)
     dry_run: bool = False
 
 
 class ChatTurn(BaseModel):
     role: Literal["user", "assistant"]
-    content: str = ""
+    content: str = Field("", max_length=16000)
     sql: Optional[str] = None
 
 
 class NlQueryRequest(BaseModel):
-    prompt: str = Field(..., min_length=1)
+    prompt: str = Field(..., min_length=1, max_length=16000)
     dry_run: bool = False
-    history: list[ChatTurn] = Field(default_factory=list)
+    history: list[ChatTurn] = Field(default_factory=list, max_length=30)
 
 
 class QueryResult(BaseModel):
@@ -209,8 +209,8 @@ class MutateRequest(BaseModel):
 
 
 class NlMutateRequest(BaseModel):
-    prompt: str = Field(..., min_length=1)
-    history: list[ChatTurn] = Field(default_factory=list)
+    prompt: str = Field(..., min_length=1, max_length=16000)
+    history: list[ChatTurn] = Field(default_factory=list, max_length=30)
 
 
 class MutatePreviewResult(BaseModel):
@@ -237,7 +237,7 @@ class MutateConfirmRequest(BaseModel):
 
 class MutateReviseRequest(BaseModel):
     preview_id: str
-    sql: str = Field(..., min_length=1)
+    sql: str = Field(..., min_length=1, max_length=32000)
 
 
 class MutateExecuteResult(BaseModel):

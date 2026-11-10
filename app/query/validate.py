@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from openai import OpenAI
+import httpx
 
 from app.query.heuristics import heuristic_mismatch
 from app.settings_store import get_llm_settings
@@ -43,7 +44,7 @@ def critique_query_result(
         cfg = get_llm_settings()
         if not cfg["api_key"]:
             raise RuntimeError("no key")
-        client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"] or None)
+        client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"] or None, timeout=30.0, max_retries=1, http_client=httpx.Client(follow_redirects=False, trust_env=False, timeout=30.0))
         preview_rows = rows[:8]
         response = client.chat.completions.create(
             model=cfg["model"],
