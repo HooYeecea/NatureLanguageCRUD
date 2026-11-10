@@ -1,4 +1,5 @@
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+import asyncio
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -92,7 +93,15 @@ def bootstrap() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     bootstrap()
-    yield
+    from app.maintenance import clean_payloads, cleanup_loop
+    clean_payloads()
+    cleanup_task = asyncio.create_task(cleanup_loop())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await cleanup_task
 
 
 app = FastAPI(

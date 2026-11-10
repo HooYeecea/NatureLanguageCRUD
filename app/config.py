@@ -17,6 +17,9 @@ WORKBENCH_ENV = (os.getenv("WORKBENCH_ENV") or "development").strip().lower()
 SECRET_KEY = os.getenv("WORKBENCH_SECRET_KEY", "dev-only-change-me")
 # Optional shared gate for /api/* (empty = disabled in development).
 WORKBENCH_API_KEY = (os.getenv("WORKBENCH_API_KEY") or "").strip()
+WORKBENCH_ADMIN_API_KEY = (os.getenv("WORKBENCH_ADMIN_API_KEY") or "").strip()
+WORKBENCH_CONNECTION_IDS = frozenset(filter(None, (os.getenv("WORKBENCH_CONNECTION_IDS") or "").split(",")))
+WORKBENCH_API_ROLE = os.getenv("WORKBENCH_API_ROLE", "reader")
 
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
@@ -32,6 +35,7 @@ _INSECURE_SECRETS = frozenset(
         "change-me-to-a-long-random-string",
         "secret",
         "password",
+        "dev-compose-change-me-16",
     }
 )
 
@@ -62,7 +66,7 @@ def assert_secret_key_safe() -> None:
 
 
 def api_key_required() -> bool:
-    return bool(WORKBENCH_API_KEY)
+    return bool(WORKBENCH_API_KEY or WORKBENCH_ADMIN_API_KEY)
 
 
 def assert_api_key_configured() -> None:
@@ -74,7 +78,12 @@ def assert_api_key_configured() -> None:
             "WORKBENCH_API_KEY is required in production. "
             "Set a long random API key in .env, or use WORKBENCH_ENV=development locally."
         )
-    if len(WORKBENCH_API_KEY) < 16:
+    if WORKBENCH_API_KEY and len(WORKBENCH_API_KEY) < 16:
         raise RuntimeError(
             "WORKBENCH_API_KEY is too short in production (use ≥16 characters)."
         )
+
+    if secret_key_is_insecure(WORKBENCH_ADMIN_API_KEY):
+        raise RuntimeError("Production requires a strong WORKBENCH_ADMIN_API_KEY")
+    if WORKBENCH_ADMIN_API_KEY == WORKBENCH_API_KEY:
+        raise RuntimeError("Admin and operator API keys must be different")
