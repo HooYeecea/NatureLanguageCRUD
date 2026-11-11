@@ -18,7 +18,7 @@ SECRET_KEY = os.getenv("WORKBENCH_SECRET_KEY", "dev-only-change-me")
 # Optional shared gate for /api/* (empty = disabled in development).
 WORKBENCH_API_KEY = (os.getenv("WORKBENCH_API_KEY") or "").strip()
 WORKBENCH_ADMIN_API_KEY = (os.getenv("WORKBENCH_ADMIN_API_KEY") or "").strip()
-WORKBENCH_CONNECTION_IDS = frozenset(filter(None, (os.getenv("WORKBENCH_CONNECTION_IDS") or "").split(",")))
+WORKBENCH_CONNECTION_IDS = frozenset(c.strip() for c in (os.getenv("WORKBENCH_CONNECTION_IDS") or "").split(",") if c.strip())
 WORKBENCH_API_ROLE = os.getenv("WORKBENCH_API_ROLE", "reader")
 
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
