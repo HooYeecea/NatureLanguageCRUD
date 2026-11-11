@@ -249,3 +249,61 @@ def test_encrypted_payload_and_audit(client):
 def test_compose_secret_rejected():
     from app.config import secret_key_is_insecure
     assert secret_key_is_insecure("dev-compose-change-me-16")
+
+
+def test_delete_and_undo_25_rows_through_api(client):
+    from app import meta_db
+    from app.db.engines import get_pooled_engine
+    from app.db.schema import get_engine_cfg
+    cid = client.get("/api/connections").json()[0]["id"]
+    engine = get_pooled_engine(get_engine_cfg(meta_db.get_connection(cid, include_password=True)))
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE security_rows(id INTEGER PRIMARY KEY, value TEXT)"))
+        conn.execute(text("INSERT INTO security_rows VALUES(:id,:value)"),
+                     [{"id": n, "value": f"row-{n}"} for n in range(1, 26)])
+    response = client.put(f"/api/connections/{cid}/policy", json={"tables": [
+        {"table": "security_rows", "allow_select": True, "allow_delete": True, "allow_insert": True}
+    ]})
+    assert response.status_code == 200
+    preview = client.post(f"/api/connections/{cid}/mutate/preview", json={
+        "operation": "delete", "table": "security_rows", "filters": [{"column": "id", "op": ">", "value": 0}]})
+    assert preview.status_code == 200, preview.text
+    executed = client.post(f"/api/connections/{cid}/mutate/confirm", json={
+        "preview_id": preview.json()["preview_id"], "ack_large_impact": True})
+    assert executed.status_code == 200, executed.text
+    assert executed.json()["rowcount"] == 25
+    undo_id = executed.json()["undo_id"]
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO security_rows VALUES(25,'conflict')"))
+    failed = client.post(f"/api/connections/{cid}/mutate/undo/{undo_id}")
+    assert failed.status_code == 400
+    with engine.begin() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM security_rows")).scalar() == 1
+        conn.execute(text("DELETE FROM security_rows"))
+    restored = client.post(f"/api/connections/{cid}/mutate/undo/{undo_id}")
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["restored_count"] == 25
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM security_rows")).scalar() == 25
+    assert client.post(f"/api/connections/{cid}/mutate/undo/{undo_id}").status_code == 409
+
+
+def test_development_rejects_host_and_origin_attacks(client):
+    assert client.post("/api/connections/not-real/policy/allow-all", headers={"Origin": "https://evil.example"}).status_code == 403
+    assert client.get("/api/connections", headers={"Host": "evil.example"}).status_code == 403
+
+
+def test_expired_snapshot_payload_is_erased(client):
+    from app import meta_db, secure_payload
+    from app.mutate.undo import create_undo
+    from app.maintenance import clean_payloads
+    cid = client.get("/api/connections").json()[0]["id"]
+    undo = create_undo(cid, table="users", schema_name=None, dialect="sqlite",
+                       rows=[{"id": 1, "secret": "fake"}], primary_key=["id"])
+    with meta_db.meta_conn() as conn:
+        conn.execute("UPDATE undo_mutations SET expires_at='2000-01-01T00:00:00+00:00' WHERE id=?", (undo["id"],))
+    clean_payloads()
+    with meta_db.meta_conn() as conn:
+        row = conn.execute("SELECT rows_json,status FROM undo_mutations WHERE id=?", (undo["id"],)).fetchone()
+    assert row["status"] == "expired"
+    assert secure_payload.loads(row["rows_json"]) == []

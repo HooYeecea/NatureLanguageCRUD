@@ -15,8 +15,12 @@ def env_paths(tmp_path, monkeypatch):
     monkeypatch.setattr("app.config.META_DB_PATH", meta)
     monkeypatch.setattr("app.meta_db.META_DB_PATH", meta)
     monkeypatch.setattr("app.config.DEMO_DB_PATH", demo)
+    monkeypatch.setattr("app.main.DEMO_DB_PATH", demo)
+    monkeypatch.setattr("app.demo_seed.DEMO_DB_PATH", demo)
+    monkeypatch.setattr("app.config._DATA_DIR", tmp_path)
     monkeypatch.setattr("app.config.WORKBENCH_API_KEY", "")
     monkeypatch.setattr("app.auth.WORKBENCH_API_KEY", "")
+    monkeypatch.setattr("app.config.WORKBENCH_ADMIN_API_KEY", "")
     from app.db.engines import dispose_all_pooled_engines
 
     dispose_all_pooled_engines()
