@@ -46,6 +46,7 @@ def validate_connection(cfg: dict) -> dict:
         allowed = {h.strip().lower() for h in os.getenv("WORKBENCH_DB_HOSTS", "").split(",") if h.strip()}
         if host not in allowed or any(c in host for c in "/\\;@?#{}"):
             raise ValueError("Database host is not in WORKBENCH_DB_HOSTS")
+        cfg["host"] = host
         port = cfg.get("port")
         if port is not None and not 1 <= int(port) <= 65535:
             raise ValueError("Invalid database port")

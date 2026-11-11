@@ -49,7 +49,7 @@ def get_llm_settings() -> dict[str, Any]:
             api_key = decrypt_secret(api_key_enc)
         except ValueError:
             api_key = ""
-    if not api_key and not stored.get("disable_env_key"):
+    if not api_key_enc and not stored.get("disable_env_key"):
         api_key = LLM_API_KEY or ""
 
     base_url = stored.get("base_url") or LLM_BASE_URL or "https://api.deepseek.com"

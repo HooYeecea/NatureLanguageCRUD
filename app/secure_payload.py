@@ -12,7 +12,7 @@ def _encode(value):
         return ["dict", [[k, _encode(v)] for k, v in value.items()]]
     if isinstance(value, list):
         return ["list", [_encode(v) for v in value]]
-    if isinstance(value, bytes):
+    if isinstance(value, (bytes, memoryview)):
         return ["bytes", base64.b64encode(value).decode()]
     if isinstance(value, (datetime, date, time)):
         return [type(value).__name__, value.isoformat()]

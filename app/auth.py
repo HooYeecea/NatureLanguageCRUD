@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 import re
+from urllib.parse import urlsplit
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -51,6 +52,12 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
         if not api_key_required():
+            host = request.url.hostname
+            origin = request.headers.get("origin")
+            if host not in {"localhost", "127.0.0.1", "::1", "testserver"}:
+                return JSONResponse(status_code=403, content={"detail": "Untrusted development host"})
+            if origin and urlsplit(origin).hostname not in {"localhost", "127.0.0.1", "::1"}:
+                return JSONResponse(status_code=403, content={"detail": "Untrusted development origin"})
             if request.client and request.client.host not in {"127.0.0.1", "::1", "testclient"}:
                 return JSONResponse(status_code=403, content={"detail": "Unauthenticated development access is loopback-only"})
             request.state.is_admin = True

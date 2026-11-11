@@ -270,8 +270,6 @@ def build_mutate_plan(
         from app.policy import effective_columns
 
         cols = effective_columns(tp, all_columns=tp.get("allowed_columns") or [])
-        if tp.get("allowed_columns") is not None:
-            cols = [c for c in (tp.get("allowed_columns") or []) if c not in set(tp.get("denied_columns") or [])]
         if not cols:
             preview_q = exp.select(exp.alias_(exp.Literal.number(1), "matched")).from_(_table_exp(table, schema_name))
             preview_q = _apply_filters(preview_q, filters).limit(preview_limit)
