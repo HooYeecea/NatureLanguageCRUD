@@ -20,6 +20,9 @@ jobs:
         env:
           WORKBENCH_ENV: development
           WORKBENCH_SECRET_KEY: ci-test-secret-key-16
+          WORKBENCH_DATA_DIR: ${{ runner.temp }}/naturecrud-tests
+          WORKBENCH_API_KEY: ""
+          WORKBENCH_ADMIN_API_KEY: ""
         run: pytest -q --tb=short
 
   frontend:
@@ -38,3 +41,5 @@ jobs:
         run: npm ci
       - name: Build
         run: npm run build
+      - name: CSV security regression tests
+        run: npm run test:security
