@@ -144,9 +144,10 @@ export const api = {
       { method: 'POST' },
     ),
 
-  undoMutate: (id: string, undo_id: string) =>
+  undoMutate: (id: string, undo_id: string, ack_large_impact = false) =>
     request<MutateUndoResult>(`/api/connections/${id}/mutate/undo/${undo_id}`, {
       method: 'POST',
+      body: JSON.stringify({ ack_large_impact }),
     }),
 
   interpret: (

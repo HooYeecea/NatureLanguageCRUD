@@ -358,10 +358,11 @@ export function WorkbenchStep({
   }
 
   async function undoDelete(undoId: string) {
+    if (!window.confirm("确认恢复此次删除的全部记录？批量恢复仍受当前写入行数上限限制。")) return
     setBusy(true)
     setError(null)
     try {
-      const restored = await api.undoMutate(connection.id, undoId)
+      const restored = await api.undoMutate(connection.id, undoId, true)
       setItems((prev) => [
         ...prev.map((item) =>
           item.undoId === undoId ? { ...item, undoId: undefined } : item,
