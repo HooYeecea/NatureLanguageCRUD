@@ -14,6 +14,8 @@ DEFAULT_TTL_SECONDS = 10 * 60
 
 
 def ensure_undo_table(conn) -> None:
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS undo_mutations (
@@ -33,6 +35,8 @@ def ensure_undo_table(conn) -> None:
         """
     )
 
+    if "connection_version" not in {r[1] for r in conn.execute("PRAGMA table_info(undo_mutations)")}:
+        conn.execute("ALTER TABLE undo_mutations ADD COLUMN connection_version TEXT")
     secure_payload.maintain(conn, "undo_mutations", "rows_json", [])
 
 
@@ -50,6 +54,7 @@ def create_undo(
     primary_key: list[str],
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
     status: str = "available",
+    connection_version: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     if not rows or not primary_key:
         return None
@@ -62,8 +67,8 @@ def create_undo(
             """
             INSERT INTO undo_mutations (
                 id, connection_id, table_name, schema_name, dialect,
-                rows_json, primary_key_json, status, created_at, expires_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                rows_json, primary_key_json, status, created_at, expires_at, connection_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 undo_id,
@@ -76,6 +81,7 @@ def create_undo(
                 status,
                 now.isoformat(),
                 expires.isoformat(),
+                connection_version,
             ),
         )
     return get_undo(undo_id)
@@ -93,6 +99,7 @@ def get_undo(undo_id: str) -> Optional[dict[str, Any]]:
     return {
         "id": row["id"],
         "connection_id": row["connection_id"],
+        "connection_version": row["connection_version"],
         "table": row["table_name"],
         "schema_name": row["schema_name"],
         "dialect": row["dialect"],
@@ -109,7 +116,7 @@ def is_undo_expired(undo: dict[str, Any]) -> bool:
     return _utcnow() >= undo["expires_at"]
 
 
-def claim_undo(undo_id: str, *, connection_id: str) -> tuple[Optional[dict[str, Any]], str]:
+def claim_undo(undo_id: str, *, connection_id: str, connection_version: Optional[str] = None) -> tuple[Optional[dict[str, Any]], str]:
     """Atomically available → restoring."""
     now = _utcnow()
     with meta_conn() as conn:
@@ -122,6 +129,10 @@ def claim_undo(undo_id: str, *, connection_id: str) -> tuple[Optional[dict[str, 
             return None, "not_found"
         if row["connection_id"] != connection_id:
             return None, "wrong_connection"
+        if connection_version is not None:
+            current = conn.execute("SELECT updated_at FROM connections WHERE id=?", (connection_id,)).fetchone()
+            if not current or row["connection_version"] != connection_version or current[0] != connection_version:
+                return None, "stale_connection"
         if row["status"] != "available":
             return None, "not_available"
         if now >= datetime.fromisoformat(row["expires_at"]):
@@ -150,7 +161,7 @@ def mark_undo_restored(undo_id: str) -> None:
             """
             UPDATE undo_mutations
             SET status = 'restored', restored_at = ?
-            WHERE id = ?
+            WHERE id = ? AND status = 'restoring'
             """,
             (_utcnow().isoformat(), undo_id),
         )
@@ -177,3 +188,8 @@ def activate_undo(undo_id: str) -> None:
 def discard_undo(undo_id: str) -> None:
     with meta_conn() as conn:
         conn.execute("DELETE FROM undo_mutations WHERE id=? AND status='preparing'", (undo_id,))
+
+
+def mark_undo_indeterminate(item_id):
+    with meta_conn() as conn:
+        conn.execute("UPDATE undo_mutations SET status='indeterminate' WHERE id=? AND status='restoring'", (item_id,))

@@ -14,6 +14,8 @@ DEFAULT_TTL_SECONDS = 10 * 60
 
 
 def ensure_pending_table(conn) -> None:
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS pending_mutations (
@@ -91,23 +93,24 @@ def mark_executed(pending_id: str) -> None:
             """
             UPDATE pending_mutations
             SET status = 'executed', executed_at = ?
-            WHERE id = ?
+            WHERE id = ? AND status = 'executing'
             """,
             (_utcnow().isoformat(), pending_id),
         )
 
 
-def mark_cancelled(pending_id: str) -> None:
+def mark_cancelled(pending_id: str) -> bool:
     with meta_conn() as conn:
         ensure_pending_table(conn)
-        conn.execute(
+        cur = conn.execute(
             """
             UPDATE pending_mutations
             SET status = 'cancelled'
-            WHERE id = ?
+            WHERE id = ? AND status = 'pending'
             """,
             (pending_id,),
         )
+        return cur.rowcount == 1
 
 
 def mark_failed(pending_id: str) -> None:
@@ -141,6 +144,7 @@ def claim_pending(
     pending_id: str,
     *,
     connection_id: Optional[str] = None,
+    connection_version: Optional[str] = None,
 ) -> tuple[Optional[dict[str, Any]], str]:
     """
     Atomically move pending → executing.
@@ -159,6 +163,11 @@ def claim_pending(
             return None, "not_found"
         if connection_id is not None and row["connection_id"] != connection_id:
             return None, "wrong_connection"
+        if connection_version is not None:
+            current = conn.execute("SELECT updated_at FROM connections WHERE id=?", (row["connection_id"],)).fetchone()
+            bound = secure_payload.loads(row["plan_json"]).get("_connection_version")
+            if not current or bound != connection_version or current[0] != connection_version:
+                return None, "stale_connection"
         if row["status"] == "executing":
             return None, "busy"
         if row["status"] != "pending":
@@ -189,3 +198,8 @@ def claim_pending(
 
 def is_expired(pending: dict[str, Any]) -> bool:
     return _utcnow() >= pending["expires_at"]
+
+
+def mark_indeterminate(item_id):
+    with meta_conn() as conn:
+        conn.execute("UPDATE pending_mutations SET status='indeterminate' WHERE id=? AND status='executing'", (item_id,))

@@ -9,20 +9,27 @@ from sqlalchemy.engine import Engine
 from sqlglot import exp
 
 from app.mutate.builder import MutatePlan, _apply_filters, _dialect, _literal, _table_exp
-from app.query.executor import _jsonable
+from app.query.executor import _jsonable, bounded_rows
+
+
+class CommitOutcomeUnknown(RuntimeError):
+    """Commit was attempted but its outcome cannot safely be inferred."""
+
+
+def _commit(conn):
+    try:
+        conn.commit()
+    except BaseException as exc:
+        raise CommitOutcomeUnknown("Commit outcome unknown; do not retry automatically") from exc
 
 
 def _fetch_dicts(conn, sql: str, limit: int = 50) -> list[dict[str, Any]]:
     if not sql:
         return []
-    result = conn.execute(text(sql))
-    keys = list(result.keys())
-    rows = []
-    for i, row in enumerate(result.fetchmany(limit)):
-        if i >= limit:
-            break
-        rows.append({k: _jsonable(v) for k, v in zip(keys, row)})
-    return rows
+    result = conn.execution_options(stream_results=True, max_row_buffer=1).execute(text(sql))
+    # SQL preview/readback already has LIMIT, retain a defensive client bound.
+    return bounded_rows(result, max_rows=limit)
+
 
 
 def preview_plan(engine: Engine, plan: MutatePlan, *, max_rows: int) -> dict[str, Any]:
@@ -103,12 +110,14 @@ def execute_plan(engine: Engine, plan: MutatePlan, *, max_rows: int = 100,
                     stmt = stmt.with_hint(tbl, "WITH (UPDLOCK, HOLDLOCK)", dialect_name="mssql")
                 elif engine.dialect.name != "sqlite":
                     stmt = stmt.with_for_update()
-                before_rows = [dict(row) for row in conn.execute(stmt).mappings()]
+                before_rows = bounded_rows(conn.execution_options(stream_results=True, max_row_buffer=1).execute(stmt),
+                                           max_rows=max_rows + 1, preserve_types=True)
                 count = len(before_rows)
                 if count > max_rows:
                     raise SqlGuardError("Affected rows exceed max_rows_per_mutation")
                 if count >= ack_threshold and not ack_large_impact:
                     raise SqlGuardError("Live affected rows require large-impact acknowledgement")
+                conn = conn.execution_options(stream_results=False)
                 for row in before_rows:
                     predicate = and_(*(tbl.c[k] == row[k] for k in pk))
                     write = tbl.delete().where(predicate) if plan.operation == "delete" else tbl.update().where(predicate).values(**(plan.set_values or {}))
@@ -118,19 +127,27 @@ def execute_plan(engine: Engine, plan: MutatePlan, *, max_rows: int = 100,
                 output = {"rowcount": count, "lastrowid": None, "before_rows": before_rows}
                 if plan.operation == "delete" and count and snapshot_writer:
                     output["undo_id"] = snapshot_writer(before_rows, pk)
-            conn.commit()
+            _commit(conn)
             return output
+        except CommitOutcomeUnknown:
+            raise
         except BaseException:
             conn.rollback()
             raise
 
 
-def restore_rows(engine: Engine, table_name: str, schema_name, rows: list[dict]) -> None:
+def restore_rows(engine: Engine, table_name: str, schema_name, rows: list[dict], *,
+                 max_rows: int = 100, ack_threshold: int = 10, ack_large_impact: bool = False) -> None:
     """All rows are restored, or none are; no partially committed undo."""
-    with engine.begin() as conn:
-        tbl = Table(table_name, MetaData(), schema=schema_name, autoload_with=conn)
-        for row in rows:
-            conn.execute(tbl.insert().values(**row))
+    from app.query.sql_guard import SqlGuardError
+    if len(rows) > max_rows or (len(rows) >= ack_threshold and not ack_large_impact):
+        raise SqlGuardError("Undo exceeds row limit or requires acknowledgement")
+    with engine.connect() as conn:
+        with conn.begin():
+            tbl = Table(table_name, MetaData(), schema=schema_name, autoload_with=conn)
+            for row in rows:
+                conn.execute(tbl.insert().values(**row))
+            _commit(conn)
 
 
 def _insert_readback_sql(plan: MutatePlan, dialect: str, lastrowid: Any) -> Optional[str]:
