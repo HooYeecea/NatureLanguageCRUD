@@ -1,3 +1,4 @@
+from app.resources import ResourceLimitExceeded
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import inspect
 
@@ -236,6 +237,8 @@ def query_natural_language(connection_id: str, body: NlQueryRequest):
 
     try:
         guarded, explanation, reply = nl_to_guarded_sql(body.prompt, **gen_kwargs)
+    except ResourceLimitExceeded as exc:
+        raise HTTPException(429, str(exc)) from exc
     except LlmNotConfigured as exc:
         audit.write_audit(
             action="query.nl",
@@ -253,6 +256,8 @@ def query_natural_language(connection_id: str, body: NlQueryRequest):
                 previous_sql=exc.sql,
                 rewrite_hint=format_guard_hint(exc),
             )
+        except ResourceLimitExceeded as limit_exc:
+            raise HTTPException(429, str(limit_exc)) from limit_exc
         except LlmNotConfigured as llm_exc:
             raise HTTPException(status_code=503, detail=str(llm_exc)) from llm_exc
         except SqlGuardError as exc2:

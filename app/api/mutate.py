@@ -1,3 +1,4 @@
+from app.resources import ResourceLimitExceeded
 from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException
@@ -7,7 +8,9 @@ from app.analysis_store import analysis_context_text, get_analysis
 from app.db.engines import get_pooled_engine
 from app.db.pool_helpers import primary_key_map, table_primary_key
 from app.db.redact import redact_rows, secret_columns_for_table, visible_rows
-from app.mutate.executor import restore_rows
+from app.mutate.executor import restore_rows, CommitOutcomeUnknown
+from app.mutate.pending import mark_indeterminate
+from app.mutate.undo import mark_undo_indeterminate
 from app.mutate.undo import activate_undo, discard_undo
 from app.db.samples import fetch_table_samples, format_samples_text
 from app.db.schema import get_engine_cfg, introspect_schema
@@ -18,6 +21,7 @@ from app.models import (
     MutateRequest,
     MutateReviseRequest,
     MutateUndoResult,
+    MutateUndoRequest,
     NlMutateRequest,
 )
 from app.mutate import (
@@ -93,6 +97,7 @@ def _preview_from_plan(
         and int(stats["affected_count"] or 0) >= ack_threshold
     )
     plan_payload = _plan_to_dict(plan)
+    plan_payload["_connection_version"] = connection["updated_at"].isoformat()
     plan_payload["_preview_meta"] = {
         "affected_count": stats["affected_count"],
         "requires_ack": requires_ack,
@@ -214,6 +219,8 @@ def mutate_nl(connection_id: str, body: NlMutateRequest):
             history=[t.model_dump() for t in (body.history or [])],
             primary_keys=pk_map,
         )
+    except ResourceLimitExceeded as exc:
+        raise HTTPException(429, str(exc)) from exc
     except LlmNotConfigured as exc:
         audit.write_audit(
             action="mutate.nl",
@@ -309,7 +316,10 @@ def mutate_revise(connection_id: str, body: MutateReviseRequest):
         )
         raise http_guard_error(exc) from exc
 
-    mark_cancelled(pending["id"])
+    if pending["plan"].get("_connection_version") != connection["updated_at"].isoformat():
+        raise HTTPException(409, "Connection changed; request a new preview")
+    if not mark_cancelled(pending["id"]):
+        raise HTTPException(409, "Preview is no longer pending")
     return _preview_from_plan(
         connection_id,
         connection,
@@ -355,7 +365,8 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
             },
         )
 
-    pending, claim_err = claim_pending(body.preview_id, connection_id=connection_id)
+    pending, claim_err = claim_pending(body.preview_id, connection_id=connection_id,
+                                      connection_version=connection["updated_at"].isoformat())
     if claim_err == "not_found" or claim_err == "wrong_connection":
         raise HTTPException(status_code=404, detail="Preview not found")
     if claim_err == "expired":
@@ -367,6 +378,8 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
             detail={"preview_id": body.preview_id},
         )
         raise HTTPException(status_code=400, detail="Preview expired; request a new preview")
+    if claim_err == "stale_connection":
+        raise HTTPException(409, "Connection changed; request a new preview")
     if claim_err == "busy":
         raise HTTPException(
             status_code=409,
@@ -378,10 +391,10 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
             detail=f"Preview status is {peeked['status']}",
         )
 
-    engine = get_pooled_engine(get_engine_cfg(connection))
     plan = None
     pk: list[str] = []
     try:
+        engine = get_pooled_engine(get_engine_cfg(connection))
         pk = table_primary_key(engine, plan_data["table"], plan_data.get("schema_name"))
         plan = build_mutate_plan(
             dialect=connection["dialect"],
@@ -405,6 +418,10 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
         )
         raise http_guard_error(exc) from exc
 
+    except Exception as exc:
+        mark_failed(pending["id"])
+        raise HTTPException(400, "Could not prepare mutation; no write was attempted") from exc
+
     max_rows = int(policy.get("max_rows_per_mutation") or 100)
     undo_id = None
     committed = False
@@ -412,7 +429,7 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
         nonlocal undo_id
         snapshot = create_undo(connection_id, table=plan.table, schema_name=plan.schema_name,
                                dialect=connection["dialect"], rows=rows, primary_key=primary_key,
-                               status="preparing")
+                               status="preparing", connection_version=connection["updated_at"].isoformat())
         undo_id = snapshot["id"]
         return undo_id
     try:
@@ -449,6 +466,7 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
                               ack_threshold=ack_threshold, ack_large_impact=body.ack_large_impact,
                               snapshot_writer=save_snapshot)
         committed = True
+        mark_executed(pending["id"])
         if undo_id:
             activate_undo(undo_id)
         changed = readback_rows(
@@ -458,6 +476,9 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
             lastrowid=result.get("lastrowid"),
             before_rows=result.get("before_rows") or [],
         )
+    except CommitOutcomeUnknown as exc:
+        mark_indeterminate(pending["id"])
+        raise HTTPException(503, "Commit outcome unknown. Do not retry; administrator must reconcile the target database.") from exc
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -481,7 +502,6 @@ def mutate_confirm(connection_id: str, body: MutateConfirmRequest):
         message = exc.message if isinstance(exc, SqlGuardError) else "Mutation failed; transaction rolled back"
         raise HTTPException(status_code=400, detail=message) from exc
 
-    mark_executed(pending["id"])
     raw_before = result.get("before_rows") or []
     secrets = secret_columns_for_table(policy, plan.table, plan.schema_name)
     before = visible_rows(raw_before, policy, plan.table, plan.schema_name)
@@ -525,8 +545,8 @@ def mutate_cancel(connection_id: str, preview_id: str):
     pending = get_pending(preview_id)
     if not pending or pending["connection_id"] != connection_id:
         raise HTTPException(status_code=404, detail="Preview not found")
-    if pending["status"] == "pending":
-        mark_cancelled(preview_id)
+    if pending["status"] != "cancelled" and not mark_cancelled(preview_id):
+        raise HTTPException(409, "Preview is no longer pending; cancellation did not occur")
     audit.write_audit(
         action="mutate.cancel",
         status="success",
@@ -538,13 +558,16 @@ def mutate_cancel(connection_id: str, preview_id: str):
 
 
 @router.post("/{connection_id}/mutate/undo/{undo_id}", response_model=MutateUndoResult)
-def mutate_undo(connection_id: str, undo_id: str):
+def mutate_undo(connection_id: str, undo_id: str, body: MutateUndoRequest | None = None):
     """Re-insert rows captured before a DELETE (short TTL, PK required)."""
     connection = _load_connection(connection_id)
     policy = policy_store.get_policy(connection_id)
-    undo, err = claim_undo(undo_id, connection_id=connection_id)
+    undo, err = claim_undo(undo_id, connection_id=connection_id,
+                           connection_version=connection["updated_at"].isoformat())
     if err == "not_found" or err == "wrong_connection":
         raise HTTPException(status_code=404, detail="Undo snapshot not found")
+    if err == "stale_connection":
+        raise HTTPException(409, "Connection changed; undo snapshot cannot be used")
     if err == "expired":
         raise HTTPException(status_code=400, detail="Undo snapshot expired")
     if err == "busy" or err == "not_available":
@@ -552,9 +575,15 @@ def mutate_undo(connection_id: str, undo_id: str):
     if err or not undo:
         raise HTTPException(status_code=400, detail="Cannot undo")
 
-    engine = get_pooled_engine(get_engine_cfg(connection))
     restored: list[dict] = []
+    max_rows = int(policy.get("max_rows_per_mutation") or 100)
+    threshold = int(policy.get("confirm_rows_threshold") or 10)
+    ack = bool(body and body.ack_large_impact)
+    if len(undo["rows"]) > max_rows or (len(undo["rows"]) >= threshold and not ack):
+        mark_undo_failed(undo_id)
+        raise HTTPException(400, "Undo exceeds current row limit or requires explicit large-impact acknowledgement")
     try:
+        engine = get_pooled_engine(get_engine_cfg(connection))
         for row in undo["rows"]:
             values = {k: v for k, v in row.items() if k is not None}
             if not values:
@@ -569,7 +598,11 @@ def mutate_undo(connection_id: str, undo_id: str):
                 primary_key=undo.get("primary_key") or [],
             )
             restored.append(values)
-        restore_rows(engine, undo["table"], undo.get("schema_name"), restored)
+        restore_rows(engine, undo["table"], undo.get("schema_name"), restored,
+                     max_rows=max_rows, ack_threshold=threshold, ack_large_impact=ack)
+    except CommitOutcomeUnknown as exc:
+        mark_undo_indeterminate(undo_id)
+        raise HTTPException(503, "Undo commit outcome unknown. Do not retry; administrator recovery required.") from exc
     except SqlGuardError as exc:
         mark_undo_failed(undo_id)
         raise http_guard_error(exc) from exc
@@ -601,3 +634,12 @@ def mutate_undo(connection_id: str, undo_id: str):
         status="restored",
         rows=safe_rows,
     )
+
+
+@router.get("/{connection_id}/mutate/status/{preview_id}")
+def mutation_status(connection_id: str, preview_id: str):
+    pending = get_pending(preview_id)
+    if not pending or pending["connection_id"] != connection_id:
+        raise HTTPException(404, "Preview not found")
+    return {"preview_id": preview_id, "status": pending["status"],
+            "executed_at": pending["executed_at"]}

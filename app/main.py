@@ -121,6 +121,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+from app.resources import ResourceLimitMiddleware
+app.add_middleware(ResourceLimitMiddleware)
 app.add_middleware(ApiKeyMiddleware)
 
 

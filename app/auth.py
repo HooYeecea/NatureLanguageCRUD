@@ -91,6 +91,7 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
                 suffix = match[2] or ""
                 allowed |= request.method == "GET" and suffix in {"", "policy"}
                 allowed |= request.method == "POST" and suffix.startswith("query/")
+                allowed |= request.method == "GET" and suffix.startswith("mutate/status/") and config.WORKBENCH_API_ROLE == "writer"
                 allowed |= request.method == "POST" and suffix.startswith("mutate/") and config.WORKBENCH_API_ROLE == "writer"
             if not allowed:
                 return JSONResponse(status_code=403, content={"detail": "Administrator credential or connection assignment required"})
