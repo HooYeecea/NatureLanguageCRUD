@@ -77,6 +77,13 @@ def _assert_select_features(expression: exp.Expression) -> None:
             raise SqlGuardError("Catalog-qualified tables and table functions are not allowed")
         if isinstance(node, exp.TableAlias) and node.args.get("columns"):
             raise SqlGuardError("Renaming derived columns through a table alias is not allowed")
+        if isinstance(node, exp.Star):
+            parent = node.parent
+            projection = parent if isinstance(parent, exp.Column) else node
+            direct = isinstance(projection.parent, exp.Select) and projection in projection.parent.expressions
+            count = isinstance(parent, exp.Count) and parent.this is node
+            if not direct and not count:
+                raise SqlGuardError("Nested wildcards and whole-row expressions are not allowed")
         if isinstance(node, exp.Star) and any(node.args.values()):
             raise SqlGuardError("Star modifiers are not allowed")
         if isinstance(node, exp.Func) and type(node).__name__ not in {

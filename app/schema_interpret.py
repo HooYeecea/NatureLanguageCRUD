@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.resources import limited_completion
+
 import json
 from typing import Any
 
@@ -100,8 +102,8 @@ def interpret_schema(
             }
         )
 
-    client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"] or None, timeout=30.0, max_retries=1, http_client=httpx.Client(follow_redirects=False, trust_env=False, timeout=30.0))
-    response = client.chat.completions.create(
+    client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"] or None, timeout=30.0, max_retries=0, http_client=httpx.Client(follow_redirects=False, trust_env=False, timeout=30.0))
+    response = limited_completion(client,
         model=cfg["model"],
         messages=[
             {

@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 import time
+import json
+from app import config
 from typing import Any
 
 from sqlalchemy import text
@@ -48,12 +50,9 @@ def execute_select(engine: Engine, sql: str, *, max_rows: int = 100_000, timeout
             elif dialect == "mssql":
                 old_timeout = raw.timeout
                 raw.timeout = timeout_seconds
-            result = conn.execute(text(sql))
+            result = conn.execution_options(stream_results=True, max_row_buffer=1).execute(text(sql))
             keys = list(result.keys())
-            fetched = result.fetchmany(max_rows + 1)
-            if len(fetched) > max_rows:
-                raise ValueError("Result exceeds the enforced row limit")
-            rows = [{k: _jsonable(v) for k, v in zip(keys, row)} for row in fetched]
+            rows = bounded_rows(result, max_rows=max_rows)
         finally:
             conn.rollback()
             if dialect == "sqlite" and old_readonly is not None:
@@ -64,3 +63,18 @@ def execute_select(engine: Engine, sql: str, *, max_rows: int = 100_000, timeout
             elif dialect == "mssql" and old_timeout is not None:
                 raw.timeout = old_timeout
     return {"columns": keys, "rows": rows, "row_count": len(rows)}
+
+
+def bounded_rows(result, *, max_rows, preserve_types=False):
+    keys = list(result.keys())
+    rows = []
+    size = len(json.dumps(keys).encode())
+    for row in result:
+        if len(rows) >= max_rows:
+            raise ValueError("Result exceeds the enforced row limit")
+        item = dict(zip(keys, row))
+        size += len(json.dumps(item, ensure_ascii=False, default=_jsonable).encode("utf-8")) + 1
+        if size > config.MAX_RESULT_BYTES:
+            raise ValueError("Result exceeds the enforced byte limit")
+        rows.append(item if preserve_types else {k: _jsonable(v) for k, v in item.items()})
+    return rows
