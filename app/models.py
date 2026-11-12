@@ -99,7 +99,7 @@ class TablePolicy(BaseModel):
     table: str = Field(..., min_length=1)
     schema_name: Optional[str] = None
     # None / omit = all columns except denied_columns
-    allowed_columns: Optional[list[str]] = None
+    allowed_columns: Optional[list[str]] = Field(default=None, max_length=256)
     denied_columns: list[str] = Field(default_factory=list)
     # Values shown as [redacted] in samples / query results / mutate read-back
     secret_columns: list[str] = Field(default_factory=list)
@@ -128,7 +128,7 @@ class PolicyCheckRequest(BaseModel):
     table: str
     operation: Operation
     schema_name: Optional[str] = None
-    columns: Optional[list[str]] = None
+    columns: Optional[list[str]] = Field(default=None, max_length=256)
 
 
 class PolicyCheckResult(BaseModel):
@@ -154,9 +154,9 @@ class OrderBy(BaseModel):
 class StructuredQueryRequest(BaseModel):
     table: str
     schema_name: Optional[str] = None
-    columns: Optional[list[str]] = None
-    filters: list[QueryFilter] = Field(default_factory=list)
-    order_by: list[OrderBy] = Field(default_factory=list)
+    columns: Optional[list[str]] = Field(default=None, max_length=256)
+    filters: list[QueryFilter] = Field(default_factory=list, max_length=100)
+    order_by: list[OrderBy] = Field(default_factory=list, max_length=100)
     limit: Optional[int] = Field(None, ge=1)
     dry_run: bool = False
 
@@ -169,7 +169,7 @@ class RawSqlQueryRequest(BaseModel):
 class ChatTurn(BaseModel):
     role: Literal["user", "assistant"]
     content: str = Field("", max_length=16000)
-    sql: Optional[str] = None
+    sql: Optional[str] = Field(default=None, max_length=32000)
 
 
 class NlQueryRequest(BaseModel):
@@ -203,9 +203,9 @@ class MutateRequest(BaseModel):
     operation: MutationOp
     table: str
     schema_name: Optional[str] = None
-    values: Optional[dict[str, Any]] = None
-    set_values: Optional[dict[str, Any]] = None
-    filters: list[QueryFilter] = Field(default_factory=list)
+    values: Optional[dict[str, Any]] = Field(default=None, max_length=256)
+    set_values: Optional[dict[str, Any]] = Field(default=None, max_length=256)
+    filters: list[QueryFilter] = Field(default_factory=list, max_length=100)
 
 
 class NlMutateRequest(BaseModel):
@@ -252,6 +252,10 @@ class MutateExecuteResult(BaseModel):
     before_rows: list[dict[str, Any]] = Field(default_factory=list)
     columns: list[str] = Field(default_factory=list)
     undo_id: Optional[str] = None
+
+
+class MutateUndoRequest(BaseModel):
+    ack_large_impact: bool = False
 
 
 class MutateUndoResult(BaseModel):

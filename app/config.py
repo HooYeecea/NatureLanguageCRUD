@@ -87,3 +87,20 @@ def assert_api_key_configured() -> None:
         raise RuntimeError("Production requires a strong WORKBENCH_ADMIN_API_KEY")
     if WORKBENCH_ADMIN_API_KEY == WORKBENCH_API_KEY:
         raise RuntimeError("Admin and operator API keys must be different")
+
+
+def _positive_limit(name, default):
+    value = int(os.getenv(name, str(default)))
+    if value < 1:
+        raise ValueError(f"{name} must be positive")
+    return value
+
+MAX_REQUEST_BYTES = _positive_limit("WORKBENCH_MAX_REQUEST_BYTES", 1048576)
+MAX_RESULT_BYTES = _positive_limit("WORKBENCH_MAX_RESULT_BYTES", 4194304)
+MAX_CONCURRENT_REQUESTS = _positive_limit("WORKBENCH_MAX_CONCURRENT_REQUESTS", 8)
+MAX_TOTAL_REQUESTS = _positive_limit("WORKBENCH_MAX_TOTAL_REQUESTS", 32)
+REQUESTS_PER_MINUTE = _positive_limit("WORKBENCH_REQUESTS_PER_MINUTE", 120)
+LLM_CALLS_PER_HOUR = _positive_limit("WORKBENCH_LLM_CALLS_PER_HOUR", 60)
+LLM_TOTAL_CALLS_PER_HOUR = _positive_limit("WORKBENCH_LLM_TOTAL_CALLS_PER_HOUR", 120)
+MAX_LLM_INPUT_BYTES = _positive_limit("WORKBENCH_MAX_LLM_INPUT_BYTES", 131072)
+MAX_LLM_OUTPUT_TOKENS = _positive_limit("WORKBENCH_MAX_LLM_OUTPUT_TOKENS", 4096)

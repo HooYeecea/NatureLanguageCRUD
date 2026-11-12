@@ -6,7 +6,7 @@ import json
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Iterator, Optional
 
 from app.config import META_DB_PATH
@@ -235,8 +235,17 @@ def update_connection(conn_id: str, payload: dict[str, Any]) -> Optional[dict[st
         path = (options or {}).get("path") or database
         options = {**(options or {}), "path": path}
 
-    now = _utcnow()
+    now = max(datetime.now(timezone.utc), existing["updated_at"] + timedelta(microseconds=1)).isoformat()
     with meta_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        _assert_connection_idle(conn, conn_id)
+        current = conn.execute("SELECT updated_at FROM connections WHERE id=?", (conn_id,)).fetchone()
+        if not current or current[0] != existing["updated_at"].isoformat():
+            from fastapi import HTTPException
+            raise HTTPException(409, "Connection changed concurrently; reload before editing")
+        conn.execute("UPDATE pending_mutations SET status='cancelled' WHERE connection_id=? AND status='pending'", (conn_id,))
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='undo_mutations'").fetchone():
+            conn.execute("UPDATE undo_mutations SET status='invalidated' WHERE connection_id=? AND status='available'", (conn_id,))
         conn.execute(
             """
             UPDATE connections SET
@@ -262,9 +271,23 @@ def update_connection(conn_id: str, payload: dict[str, Any]) -> Optional[dict[st
 
 def delete_connection(conn_id: str) -> bool:
     with meta_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        _assert_connection_idle(conn, conn_id)
         conn.execute("DELETE FROM access_policies WHERE connection_id = ?", (conn_id,))
         conn.execute("DELETE FROM pending_mutations WHERE connection_id = ?", (conn_id,))
         conn.execute("DELETE FROM schema_analyses WHERE connection_id = ?", (conn_id,))
         conn.execute("DELETE FROM glossaries WHERE connection_id = ?", (conn_id,))
         cur = conn.execute("DELETE FROM connections WHERE id = ?", (conn_id,))
         return cur.rowcount > 0
+
+
+def _assert_connection_idle(conn, connection_id):
+    from fastapi import HTTPException
+    for table, states in (("pending_mutations", ("executing", "indeterminate")),
+                          ("undo_mutations", ("preparing", "restoring", "indeterminate"))):
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+            continue
+        marks = ",".join("?" for _ in states)
+        if conn.execute(f"SELECT 1 FROM {table} WHERE connection_id=? AND status IN ({marks}) LIMIT 1",
+                        (connection_id, *states)).fetchone():
+            raise HTTPException(409, "Connection has an active or unresolved write; finish recovery before changing it")

@@ -36,7 +36,11 @@ def _decode(value):
 
 
 def dumps(value):
-    return "enc:" + encrypt_secret(json.dumps(_encode(value), ensure_ascii=False))
+    from app import config
+    payload = json.dumps(_encode(value), ensure_ascii=False)
+    if len(payload.encode("utf-8")) > config.MAX_RESULT_BYTES:
+        raise ValueError("Snapshot exceeds byte budget")
+    return "enc:" + encrypt_secret(payload)
 
 
 def loads(value):
@@ -48,6 +52,6 @@ def loads(value):
 def maintain(conn, table, field, empty):
     # Names are hard-coded by the two callers, never request input.
     now = datetime.now(timezone.utc).isoformat()
-    conn.execute(f"UPDATE {table} SET {field} = ?, status = 'expired' WHERE expires_at <= ? AND status != 'expired'", (dumps(empty), now))
+    conn.execute(f"UPDATE {table} SET {field} = ?, status = CASE WHEN status IN ('pending', 'available') THEN 'expired' ELSE status END WHERE expires_at <= ? AND status NOT IN ('executing', 'restoring', 'preparing', 'indeterminate')", (dumps(empty), now))
     for row in conn.execute(f"SELECT id, {field} FROM {table} WHERE {field} NOT LIKE 'enc:%'").fetchall():
         conn.execute(f"UPDATE {table} SET {field} = ? WHERE id = ?", (dumps(json.loads(row[field])), row["id"]))
