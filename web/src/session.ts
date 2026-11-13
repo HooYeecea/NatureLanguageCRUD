@@ -5,6 +5,9 @@ import type { Connection, InterpretResult, SchemaOverview } from './types'
 const KEY = 'nlcrud.workspace.v1'
 
 export type PersistedChatItem = {
+  clarification?: {question: string; options: string[]; prompt: string}
+  mutationStatusId?: string
+  queryPrompt?: string
   role: 'user' | 'assistant'
   kind?: 'text' | 'sql' | 'result' | 'error' | 'diff'
   text: string

@@ -1,4 +1,5 @@
 import type {
+  Metric, QueryTemplate, MutationStatus,
   AccessPolicy,
   AuditLog,
   AuthStatus,
@@ -39,6 +40,17 @@ export function setWorkbenchApiKey(key: string): void {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 60000)
+  try {
+    return await requestOnce<T>(path, {...init, signal: controller.signal})
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('请求等待超时。写入可能仍在执行，请查看原操作状态，不要重复提交。')
+    throw error
+  } finally { clearTimeout(timer) }
+}
+
+async function requestOnce<T>(path: string, init?: RequestInit): Promise<T> {
   const workbenchKey = getWorkbenchApiKey()
   const res = await fetch(path, {
     ...init,
@@ -66,6 +78,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  metrics: (id: string) => request<{items: Metric[]; can_edit: boolean}>(`/api/connections/${id}/metrics`),
+  saveMetric: (id: string, body: Omit<Metric, 'id'>, itemId?: string) => request<Metric>(`/api/connections/${id}/metrics${itemId ? '/' + itemId : ''}`, {method: itemId ? 'PUT' : 'POST', body: JSON.stringify(body)}),
+  deleteMetric: (id: string, itemId: string) => request(`/api/connections/${id}/metrics/${itemId}`, {method: 'DELETE'}),
+  templates: (id: string) => request<{items: QueryTemplate[]}>(`/api/connections/${id}/templates`),
+  saveTemplate: (id: string, body: Omit<QueryTemplate, 'id'>, itemId?: string) => request<QueryTemplate>(`/api/connections/${id}/templates${itemId ? '/' + itemId : ''}`, {method: itemId ? 'PUT' : 'POST', body: JSON.stringify(body)}),
+  deleteTemplate: (id: string, itemId: string) => request(`/api/connections/${id}/templates/${itemId}`, {method: 'DELETE'}),
+  runTemplate: (id: string, itemId: string, values: Record<string, string>) => request<QueryResult>(`/api/connections/${id}/templates/${itemId}/run`, {method: 'POST', body: JSON.stringify({values})}),
+  mutationStatus: (id: string, previewId: string) => request<MutationStatus>(`/api/connections/${id}/mutate/status/${previewId}`),
   authStatus: () => request<AuthStatus>('/api/auth/status'),
 
   settings: () => request<Settings>('/api/settings'),

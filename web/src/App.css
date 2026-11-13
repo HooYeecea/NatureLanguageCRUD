@@ -1218,3 +1218,11 @@ td {
     grid-template-columns: 1fr;
   }
 }
+
+.feature-library { margin: 12px 0; padding: 14px; border: 1px solid #d9e2ee; border-radius: 10px; }
+.feature-library > summary { cursor: pointer; font-weight: 600; }
+.feature-entry { margin: 12px 0; padding: 12px; border: 1px solid #d9e2ee; border-radius: 8px; overflow-wrap: anywhere; }
+.feature-form { display: grid; gap: 12px; margin-top: 14px; }
+.feature-form label { display: grid; gap: 5px; }
+.feature-form input, .feature-form select, .feature-form textarea { padding: 9px; border: 1px solid #ccd5e0; border-radius: 6px; font: inherit; max-width: 100%; box-sizing: border-box; }
+.feature-form textarea { min-height: 80px; resize: vertical; }

@@ -78,6 +78,8 @@ export type GlossaryTable = {
   columns: GlossaryColumn[]
 }
 export type QueryResult = {
+  clarification?: { question: string; options: string[] } | null
+  clarification_prompt?: string | null
   sql: string
   tables: string[]
   limit?: number | null
@@ -184,3 +186,15 @@ export type WizardState = {
   selectedTables: Array<{ table: string; schema_name?: string | null }>
   interpret: InterpretResult | null
 }
+
+export type Metric = {
+  id: string
+  name: string
+  table: string
+  schema_name?: string | null
+  definition: string
+  time_field: string
+}
+export type TemplateParameter = { name: string; label: string; kind: 'text' | 'date' | 'number' }
+export type QueryTemplate = { id: string; name: string; prompt: string; parameters: TemplateParameter[] }
+export type MutationStatus = { preview_id: string; status: string; executed_at?: string | null }
