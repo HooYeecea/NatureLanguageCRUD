@@ -74,6 +74,13 @@ def _history_block(history: Optional[list[dict[str, Any]]]) -> str:
 
 
 TOOLS = [
+    {"type": "function", "function": {
+        "name": "ask_clarification",
+        "description": "Ask one concise question before querying when missing time range, metric definition, entity identity or a choice between conflicting definitions materially changes the answer. Do not guess. Offer up to four short choices when possible.",
+        "parameters": {"type": "object", "properties": {
+            "question": {"type": "string"},
+            "options": {"type": "array", "items": {"type": "string"}, "maxItems": 4}},
+            "required": ["question"]}}},
     {
         "type": "function",
         "function": {
@@ -139,7 +146,10 @@ def nl_to_guarded_sql(
             "content": (
                 "You are a careful SQL assistant for an internal CRUD workbench. "
                 f"Dialect: {dialect}. "
-                "You must only call run_select_sql with a single SELECT. "
+                "Either call ask_clarification OR run_select_sql with a single SELECT, never both. "
+                "Ask a clarification when a material requirement is ambiguous (such as 'recent' without a defined period, conflicting metric definitions, or multiple matching entities). "
+                "Use explicit answers already supplied in the conversation; do not ask the same resolved question again. "
+                "Use approved business metric definitions when relevant; explain the chosen metric and time field in the SQL explanation. "
                 "Never invent tables/columns outside the schema. "
                 f"Respect max rows <= {max_rows}. "
                 "Rules for accurate SQL:\n"
@@ -176,6 +186,13 @@ def nl_to_guarded_sql(
     if not message.tool_calls:
         return None, None, message.content
 
+    clarification_call = next((t for t in message.tool_calls if t.function.name == "ask_clarification"), None)
+    if clarification_call:
+        from app.models import Clarification
+        clarification = Clarification.model_validate_json(clarification_call.function.arguments or "{}")
+        return None, None, {"clarification": clarification.model_dump()}
+    if len(message.tool_calls) != 1:
+        raise SqlGuardError("Exactly one query tool call is allowed")
     tool_call = message.tool_calls[0]
     if tool_call.function.name != "run_select_sql":
         raise SqlGuardError(f"Unexpected tool: {tool_call.function.name}")

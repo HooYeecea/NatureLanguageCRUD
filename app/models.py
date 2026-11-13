@@ -178,7 +178,14 @@ class NlQueryRequest(BaseModel):
     history: list[ChatTurn] = Field(default_factory=list, max_length=30)
 
 
+class Clarification(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+    options: list[str] = Field(default_factory=list, max_length=4)
+
+
 class QueryResult(BaseModel):
+    clarification: Optional[Clarification] = None
+    clarification_prompt: Optional[str] = None
     sql: str
     tables: list[str] = Field(default_factory=list)
     limit: Optional[int] = None

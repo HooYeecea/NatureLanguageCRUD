@@ -196,6 +196,12 @@ def query_natural_language(connection_id: str, body: NlQueryRequest):
     connection = _load_connection(connection_id)
     policy = policy_store.get_policy(connection_id)
 
+    import re
+    vague_period = re.search(r"最近|近期|recent(?:ly)?|lately", body.prompt, re.I)
+    explicit_period = re.search(r"(?:近|过去|最近|last|past)\s*[0-9一二三四五六七八九十两]+\s*(?:天|日|周|个?月|年|days?|weeks?|months?|years?)|20\d{2}[-年/]\d{1,2}|本周|本月|本年|今年|昨天|今天|上个月|上周|全部时间|all time", body.prompt, re.I)
+    if vague_period and not explicit_period and not body.history:
+        return QueryResult(sql="", dry_run=body.dry_run, clarification_prompt=body.prompt,
+                           clarification={"question": "这里的最近具体指哪个时间范围？", "options": ["最近7天", "最近30天", "全部时间"]})
     engine = get_pooled_engine(get_engine_cfg(connection))
     try:
         overview = introspect_schema(engine, connection_id, connection["dialect"])
@@ -223,7 +229,8 @@ def query_natural_language(connection_id: str, body: NlQueryRequest):
         ],
     )
     analysis_ctx = analysis_context_text(analysis)
-    glossary_ctx = glossary_context_text(get_glossary(connection_id))
+    from app.workbench_features import metric_context
+    glossary_ctx = glossary_context_text(get_glossary(connection_id)) + metric_context(connection_id)
     history = [t.model_dump() for t in (body.history or [])]
     gen_kwargs = {
         "dialect": connection["dialect"],
@@ -288,6 +295,8 @@ def query_natural_language(connection_id: str, body: NlQueryRequest):
         )
         raise HTTPException(status_code=502, detail="大模型请求失败，请检查 API 设置后重试") from exc
 
+    if guarded is None and isinstance(reply, dict) and "clarification" in reply:
+        return QueryResult(sql="", dry_run=body.dry_run, clarification=reply["clarification"], clarification_prompt=body.prompt)
     if guarded is None:
         audit.write_audit(
             action="query.nl",
@@ -337,6 +346,8 @@ def query_natural_language(connection_id: str, body: NlQueryRequest):
         first.validation_note = critique.get("reason") or "结果可能未准确回答问题，可编辑 SQL 后重跑。"
         return first
 
+    if guarded2 is None and isinstance(reply2, dict) and "clarification" in reply2:
+        return QueryResult(sql="", clarification=reply2["clarification"], clarification_prompt=body.prompt)
     if guarded2 is None or guarded2.sql == first.sql:
         first.validation_ok = False
         first.validation_note = (

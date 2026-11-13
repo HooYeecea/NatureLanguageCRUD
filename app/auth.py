@@ -90,6 +90,9 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
             if match and match[1] in config.WORKBENCH_CONNECTION_IDS:
                 suffix = match[2] or ""
                 allowed |= request.method == "GET" and suffix in {"", "policy"}
+                allowed |= request.method == "GET" and suffix in {"metrics", "templates"}
+                allowed |= request.method == "POST" and (suffix == "templates" or bool(re.fullmatch(r"templates/[^/]+/run", suffix)))
+                allowed |= request.method in {"PUT", "DELETE"} and bool(re.fullmatch(r"templates/[^/]+", suffix))
                 allowed |= request.method == "POST" and suffix.startswith("query/")
                 allowed |= request.method == "GET" and suffix.startswith("mutate/status/") and config.WORKBENCH_API_ROLE == "writer"
                 allowed |= request.method == "POST" and suffix.startswith("mutate/") and config.WORKBENCH_API_ROLE == "writer"

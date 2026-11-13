@@ -143,3 +143,6 @@ app.include_router(query_router)
 app.include_router(mutate_router)
 app.include_router(audit_router)
 app.include_router(workspace_router)
+
+from app.workbench_features import router as workbench_features_router
+app.include_router(workbench_features_router)
