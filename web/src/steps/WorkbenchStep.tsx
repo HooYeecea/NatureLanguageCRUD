@@ -1,3 +1,7 @@
+import { MetricLibrary } from '../components/MetricLibrary'
+import { QueryLibrary } from '../components/QueryLibrary'
+import { MutationStatusCard } from '../components/MutationStatusCard'
+import type { QueryTemplate } from '../types'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { api } from '../api'
 import { downloadCsv } from '../csv'
@@ -49,6 +53,8 @@ export function WorkbenchStep({
   onRestart,
 }: Props) {
   const [mode, setMode] = useState<'query' | 'mutate'>(initialMode)
+  const [templateDraft, setTemplateDraft] = useState('')
+  const [clarifying, setClarifying] = useState<{question: string; prompt: string} | null>(() => (initialItems && initialItems.length ? initialItems[initialItems.length - 1].clarification : null) || null)
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -67,7 +73,7 @@ export function WorkbenchStep({
 
   useEffect(() => {
     onChatChange?.(
-      items.map(({ preview: _p, ...rest }) => rest),
+      items.map(item => { const saved = {...item}; delete saved.preview; return saved }),
     )
   }, [items, onChatChange])
 
@@ -85,6 +91,7 @@ export function WorkbenchStep({
 
   function setModeAndNotify(next: 'query' | 'mutate') {
     setMode(next)
+    setClarifying(null)
     onModeChange?.(next)
   }
 
@@ -92,8 +99,15 @@ export function WorkbenchStep({
     result: QueryResult,
     sqlLabel: string,
     userPrompt?: string,
-  ) {
+  ): ChatItem[] {
     const next: ChatItem[] = []
+    if (result.clarification) {
+      const clarification = {...result.clarification, prompt: result.clarification_prompt || userPrompt || ''}
+      setClarifying(clarification)
+      return [{role: 'assistant', kind: 'text', text: clarification.question, clarification}]
+    }
+    setClarifying(null)
+    if (result.explanation) next.push({role: 'assistant', kind: 'text', text: result.explanation})
     if (result.sql) {
       next.push({
         role: 'assistant',
@@ -195,11 +209,13 @@ export function WorkbenchStep({
   }
 
   async function sendPrompt(raw: string) {
-    const userText = raw.trim()
-    if (!userText || busy) return
+    const answer = raw.trim()
+    const userText = clarifying && mode === 'query'
+      ? `${clarifying.prompt}\n澄清问题：${clarifying.question}\n用户回答：${answer}` : answer
+    if (!answer || busy) return
     const history = buildHistory()
     setPrompt('')
-    setItems((prev) => [...prev, { role: 'user', kind: 'text', text: userText }])
+    setItems((prev) => [...prev, { role: 'user', kind: 'text', text: userText, queryPrompt: mode === 'query' ? userText : undefined }])
     setBusy(true)
     setError(null)
     setAckLarge(false)
@@ -207,7 +223,8 @@ export function WorkbenchStep({
       if (mode === 'query') {
         const result: QueryResult = await api.nlQuery(connection.id, userText, { history })
         const label = result.retried ? '已校验并改写 SQL' : '已转换为 SQL'
-        setItems((prev) => [...prev, ...appendQueryResult(result, label, userText)])
+        const resultItems = appendQueryResult(result, label, userText)
+        setItems((prev) => [...prev, ...resultItems])
       } else {
         const preview = await api.nlMutate(connection.id, userText, history)
         setPending(preview.blocked ? null : preview)
@@ -241,7 +258,8 @@ export function WorkbenchStep({
     ])
     try {
       const result = await api.runSql(connection.id, trimmed)
-      setItems((prev) => [...prev, ...appendQueryResult(result, '已执行编辑后的 SQL')])
+      const resultItems = appendQueryResult(result, '已执行编辑后的 SQL')
+      setItems((prev) => [...prev, ...resultItems])
     } catch (err) {
       const msg = friendlyError(err)
       setError(msg)
@@ -274,6 +292,17 @@ export function WorkbenchStep({
     }
   }
 
+  async function runSavedTemplate(template: QueryTemplate, values: Record<string,string>) {
+    if(busy) return
+    setModeAndNotify('query'); setBusy(true); setError(null)
+    setItems(prev => [...prev, {role:'user', kind:'text', text:`运行常用查询：${template.name}`}])
+    try {
+      const result = await api.runTemplate(connection.id, template.id, values)
+      const resultItems = appendQueryResult(result, '常用查询生成的 SQL', template.prompt)
+      setItems(prev => [...prev, ...resultItems])
+    } catch(e) {setError(friendlyError(e))} finally {setBusy(false)}
+  }
+
   async function confirmPending() {
     if (!pending) return
     if (pending.requires_ack && !ackLarge) {
@@ -282,9 +311,12 @@ export function WorkbenchStep({
     }
     setBusy(true)
     setError(null)
+    const previewId = pending.preview_id
+    setItems(prev => [...prev, {role: 'assistant', kind: 'text', text: '已提交确认请求，正在核实执行状态。', mutationStatusId: previewId}])
+    setPending(null)
     try {
       const result = await api.confirmMutate(connection.id, pending.preview_id, {
-        ack_large_impact: ackLarge || !pending.requires_ack,
+        ack_large_impact: ackLarge,
       })
       setItems((prev) => [...prev, ...appendMutateResult(result)])
       setPending(null)
@@ -417,10 +449,20 @@ export function WorkbenchStep({
         </button>
       </div>
 
+      <MetricLibrary key={'metrics-' + connection.id} connectionId={connection.id}/>
+      <QueryLibrary key={'templates-' + connection.id} connectionId={connection.id} draftPrompt={templateDraft} disabled={busy} onRun={runSavedTemplate}/>
+      {mode === 'query' && prompt.trim() && <button type="button" className="btn ghost" onClick={() => setTemplateDraft(prompt)}>收藏当前问题</button>}
+      {clarifying && mode === 'query' && <div className="feature-entry">正在补充：{clarifying.question}<button type="button" className="btn ghost" onClick={() => setClarifying(null)}>取消追问，开始新问题</button></div>}
       <div className="chat" ref={chatRef}>
         {items.map((item, idx) => (
           <article key={idx} className={`bubble ${item.role} ${item.kind || ''}`}>
             <p>{item.text}</p>
+            {item.queryPrompt && <button type="button" className="btn ghost" onClick={() => setTemplateDraft(item.queryPrompt!)}>收藏查询</button>}
+            {item.mutationStatusId && <MutationStatusCard connectionId={connection.id} previewId={item.mutationStatusId}/>}
+            {item.clarification && <div className="result-toolbar">
+              {item.clarification.options.map(option => <button key={option} type="button" className="suggest-chip" disabled={busy || mode !== 'query' || clarifying?.question !== item.clarification?.question} onClick={() => void sendPrompt(option)}>{option}</button>)}
+              <span className="muted small">也可以在输入框填写具体要求。</span>
+            </div>}
             {item.sql && item.editableSql ? (
               <EditableSql
                 sql={item.sql}
